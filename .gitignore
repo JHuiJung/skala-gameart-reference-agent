@@ -130,3 +130,6 @@ dist/
 # =========================
 .env.docker
 docker-compose.override.yml
+
+# Vector DB (Chroma)
+vector_db/
