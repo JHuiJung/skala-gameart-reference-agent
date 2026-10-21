@@ -1,7 +1,13 @@
+import base64
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()  # 로컬 실행 시 프로젝트 루트의 .env 로드 (Docker 는 env_file 사용)
+
+from app.agent.graph import graph
 from app.dependencies import get_upload_form
 from app.schemas import UploadForm, UploadResponse
 
@@ -21,11 +27,15 @@ async def upload(form: Annotated[UploadForm, Depends(get_upload_form)], image: U
         raise HTTPException(status_code=415, detail="이미지 파일만 업로드할 수 있습니다.")
 
     data = await image.read()
-    print(f"텍스트: {form.text}")
-    print(f"이미지 이름: {image.filename} ({image.content_type}, {len(data)} bytes)")
+    result = await graph.ainvoke({
+        "text": form.text,
+        "image_b64": base64.b64encode(data).decode(),
+        "image_mime": image.content_type,
+    })
     return UploadResponse(
-        message="업로드 완료",
+        message="분석 완료",
         text=form.text,
         image_name=image.filename,
         image_size=len(data),
+        analysis=result["analysis"],
     )

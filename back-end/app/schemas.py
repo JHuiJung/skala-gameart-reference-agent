@@ -1,6 +1,8 @@
 """API 요청/응답 데이터 구조를 정의하는 Pydantic 스키마 모음."""
 from pydantic import BaseModel, Field
 
+from app.agent.state import InputAnalysis
+
 
 class UploadForm(BaseModel):
     """[요청] POST /upload 에서 이미지와 함께 받는 텍스트 입력.
@@ -19,3 +21,4 @@ class UploadResponse(BaseModel):
     text: str  # 서버가 받은 텍스트 (입력 그대로)
     image_name: str  # 업로드된 이미지의 원본 파일명
     image_size: int  # 업로드된 이미지의 크기 (bytes)
+    analysis: InputAnalysis  # 에이전트의 입력 분석 결과

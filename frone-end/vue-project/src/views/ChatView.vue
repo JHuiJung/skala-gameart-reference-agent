@@ -37,6 +37,20 @@ function finishSteps(reply) {
   if (last && !last.endedAt) last.endedAt = Date.now()
 }
 
+// 입력 분석 결과를 사람이 읽기 좋은 텍스트로 만든다
+function formatAnalysis(a) {
+  const rows = [
+    ['대상', a.subject],
+    ['분위기', a.mood.join(', ')],
+    ['재질', a.materials.join(', ')],
+    ['색상', a.colors.join(', ')],
+    ['구도', a.composition],
+    ['제외', a.exclude.join(', ')],
+    ['이미지 요약', a.summary],
+  ]
+  return rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n')
+}
+
 async function onSend({ text, image, imageUrl }) {
   messages.value.push({ role: 'user', text, imageUrl })
   messages.value.push({ role: 'assistant', text: '', steps: [] })
@@ -47,7 +61,7 @@ async function onSend({ text, image, imageUrl }) {
   try {
     const result = await sendMessage({ text, image, onStatus: (label) => setStatus(reply, label) })
     finishSteps(reply)
-    reply.text = `${result.message}: ${result.image_name} (${result.image_size} bytes)`
+    reply.text = formatAnalysis(result.analysis)
   } catch (err) {
     finishSteps(reply)
     reply.error = true
