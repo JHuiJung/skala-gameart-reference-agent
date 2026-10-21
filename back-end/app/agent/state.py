@@ -147,6 +147,50 @@ class ImageReview(BaseModel):
     verdicts: list[ImageVerdict]
 
 
+class BriefSection(BaseModel):
+    """[5단계] 지시서의 한 섹션에 '무엇을 쓸지'에 대한 계획. 사용자가 확인하고 수정할 수 있다."""
+
+    heading: str = Field(description="섹션 제목")
+    outline: str = Field(description="이 섹션에 쓸 내용 요약 (2~4줄). 본문이 아니라 계획이다")
+
+
+class BriefPlan(BaseModel):
+    """[5단계 결과] 지시서 작성 계획 (섹션 목록)."""
+
+    sections: list[BriefSection]
+
+
+class BriefSectionBody(BaseModel):
+    """지시서 한 섹션의 본문."""
+
+    heading: str = Field(description="승인된 계획의 섹션 제목 그대로")
+    body: str = Field(description="마크다운 본문")
+
+
+class ImageUsage(BaseModel):
+    """선택한 레퍼런스 이미지 한 장을 어떤 목적으로 참고하는지."""
+
+    id: str = Field(description="이미지 id")
+    usage: str = Field(description="활용 목적 한 문장 (한국어)")
+
+
+class BriefDraft(BaseModel):
+    """[6단계 결과] LLM 이 쓴 지시서 본문과 이미지별 활용 목적."""
+
+    sections: list[BriefSectionBody]
+    image_usage: list[ImageUsage]
+
+
+class SavedReference(BaseModel):
+    """선택한 레퍼런스 이미지 하나의 저장 결과."""
+
+    candidate: Candidate
+    file: str | None = Field(default=None, description="저장한 파일의 결과 폴더 기준 상대 경로. 저장하지 않았으면 None")
+    status: Literal["saved", "link_only", "failed"] = Field(description="saved 저장됨 / link_only 링크만 기록 / failed 저장 실패")
+    note: str = Field(default="", description="파일로 저장하지 않은 이유")
+    usage: str = Field(default="", description="활용 목적")
+
+
 class AgentState(TypedDict, total=False):
     """그래프 전체가 공유하는 상태. total=False 라서 아직 채워지지 않은 필드는 없어도 된다."""
 
@@ -171,12 +215,19 @@ class AgentState(TypedDict, total=False):
     source_errors: list[str]  # 검색 출처 중 실패한 곳 (일부 실패해도 나머지 결과로 진행)
 
     # ── 사용자 선택 (후보 확인 후 이어서 실행할 때 채움) ──────────
-    selected_ids: list[str]  # 사용자가 승인한 후보 id
+    selected_ids: list[str]  # 사용자가 클릭해서 고른 후보 id
+
+    # ── 지시서 작성 ───────────────────────────────────────────
+    save_unverified: bool  # 라이선스가 확인되지 않은 이미지도 파일로 저장할지 (사용자가 선택)
+    rule_guides: list[Guideline]  # 지시서에 반영할 회사 규정
+    brief_plan: BriefPlan  # 지시서 작성 계획 (사용자가 승인한 것)
+    brief_notes: str  # 사용자가 지시서 작성에 추가로 요청한 내용
+    saved_refs: list[SavedReference]  # 선택한 이미지의 저장 결과
 
     # ── 최종 결과 ────────────────────────────────────────────
-    output_dir: str  # 저장된 레퍼런스 폴더 경로
+    output_dir: str  # 저장된 결과 폴더 경로 (예: .../result/artBrief_001)
     brief_path: str  # 생성된 지시서.md 경로
-    zip_path: str  # 결과 ZIP 경로
+    brief_markdown: str  # 지시서 내용 (화면 미리보기용)
 
     # ── 진행 상태 ───────────────────────────────────────────
     current_step: str  # 지금 하고 있는 일 (화면 진행 표시에 사용)

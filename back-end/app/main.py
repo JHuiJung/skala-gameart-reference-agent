@@ -66,7 +66,7 @@ async def upload(form: Annotated[UploadForm, Depends(get_upload_form)], image: U
 async def answer(body: AnswerRequest):
     """질문 답변 또는 확정한 카테고리를 받아 멈춘 작업을 이어서 실행한다."""
     with _resume_errors():
-        return await runner.resume(body.thread_id, body.answers, body.categories, body.per_category)
+        return await runner.resume(body)
 
 
 @app.post("/upload/stream")
@@ -81,7 +81,7 @@ async def answer_stream(body: AnswerRequest):
     """/answer 와 같지만 진행 상황을 실시간으로(SSE) 보낸다."""
     # 스트리밍은 응답을 시작한 뒤에는 상태 코드를 바꿀 수 없으므로, 재개 가능 여부는 시작하기 전에 확인한다
     with _resume_errors():
-        value = await runner.prepare_resume(body.thread_id, body.answers, body.categories, body.per_category)
+        value = await runner.prepare_resume(body)
     return StreamingResponse(
         _sse(runner.stream_resume(body.thread_id, value)), media_type="text/event-stream", headers=STREAM_HEADERS
     )

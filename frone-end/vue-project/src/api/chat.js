@@ -80,3 +80,21 @@ export function sendCategories({ threadId, categories, perCategory, onStatus, on
     { onStatus, onDetail },
   )
 }
+
+/** 사용자가 클릭해서 고른 이미지 id 들을 보낸다. saveUnverified: 라이선스가 확인되지 않은 이미지도 파일로 저장할지 */
+export function sendSelection({ threadId, selectedIds, saveUnverified, onStatus, onDetail }) {
+  return postJson(
+    '/answer/stream',
+    { thread_id: threadId, selected_ids: selectedIds, save_unverified: saveUnverified },
+    { onStatus, onDetail },
+  )
+}
+
+/** 사용자가 확인·수정한 지시서 작성 계획(섹션 목록)과 추가 요청을 보내 지시서 작성을 시작한다. */
+export function sendBrief({ threadId, sections, notes, onStatus, onDetail }) {
+  return postJson(
+    '/answer/stream',
+    { thread_id: threadId, brief_sections: sections, brief_notes: notes },
+    { onStatus, onDetail },
+  )
+}

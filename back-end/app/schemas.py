@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.agent.state import Candidate, Guideline, InputAnalysis, Question, ReferenceCategory
+from app.agent.state import BriefSection, Candidate, Guideline, InputAnalysis, Question, ReferenceCategory
 
 
 class UploadForm(BaseModel):
@@ -27,6 +27,30 @@ class AnswerRequest(BaseModel):
     # kind=confirm_categories 와 함께 보내는, 카테고리당 보여줄 이미지 수 (1~10)
     per_category: int = Field(default=5, ge=1, le=10)
 
+    # kind=select_images 에 대한 답: 사용자가 클릭해서 고른 이미지 id, 그리고 라이선스가 확인되지 않은 이미지도 파일로 저장할지
+    selected_ids: list[str] | None = Field(default=None, min_length=1, max_length=100)
+    save_unverified: bool = False
+    # kind=confirm_brief 에 대한 답: 사용자가 확인·수정한 지시서 작성 계획과 추가 요청
+    brief_sections: list[BriefSection] | None = None
+    brief_notes: str = Field(default="", max_length=1500)
+
+    @field_validator("brief_sections")
+    @classmethod
+    def clean_brief_sections(cls, sections):
+        if sections is None:
+            return None
+        cleaned = [BriefSection(heading=s.heading.strip(), outline=s.outline.strip()) for s in sections]
+        if not 1 <= len(cleaned) <= 15:
+            raise ValueError("섹션은 1~15개여야 합니다.")
+        headings = [s.heading for s in cleaned]
+        if any(not h or len(h) > 60 for h in headings):
+            raise ValueError("섹션 제목은 1~60자여야 합니다.")
+        if len(set(headings)) != len(headings):
+            raise ValueError("섹션 제목이 중복됩니다.")
+        if any(len(s.outline) > 1500 for s in cleaned):
+            raise ValueError("섹션 내용은 1500자 이하여야 합니다.")
+        return cleaned
+
     @field_validator("categories")
     @classmethod
     def clean_categories(cls, names):
@@ -40,6 +64,17 @@ class AnswerRequest(BaseModel):
         return cleaned
 
 
+class OutputSummary(BaseModel):
+    """[응답] 저장된 결과 폴더 요약."""
+
+    folder: str  # 결과 폴더 (예: result/artBrief_001)
+    brief_file: str  # 지시서 파일 이름
+    saved: int  # 파일로 저장한 이미지 수
+    link_only: int  # 파일 없이 링크만 기록한 이미지 수 (라이선스 미확인·제한)
+    failed: int  # 내려받기에 실패한 이미지 수
+    brief_markdown: str  # 지시서 내용 (미리보기용)
+
+
 class AgentResponse(BaseModel):
     """[응답] /upload, /answer 공통 응답.
 
@@ -48,7 +83,7 @@ class AgentResponse(BaseModel):
     """
 
     status: Literal["needs_input", "done"]
-    kind: Literal["questions", "confirm_categories"] | None = None  # (needs_input) 어떤 종류의 답을 기다리는지
+    kind: Literal["questions", "confirm_categories", "select_images", "confirm_brief"] | None = None  # (needs_input) 어떤 종류의 답을 기다리는지
     thread_id: str  # 이 작업의 식별자. 질문에 답할 때 /answer 로 다시 보낸다
     asset_type: str | None = None  # character | background | prop | ui | unknown
     details: dict[str, str] = {}  # 지금까지 확인된 필수 항목 값 (key -> 값)
@@ -58,7 +93,10 @@ class AgentResponse(BaseModel):
     proposed_categories: list[ReferenceCategory] = []  # (kind=confirm_categories) AI 가 제안한 레퍼런스 카테고리
     goal: str = ""  # (kind=confirm_categories) AI 가 이해한 사용자의 최종 목표 - 잘못 이해했는지 확인용
 
-    # (done) 처리 결과
+    brief_sections: list[BriefSection] = []  # (kind=confirm_brief) AI 가 세운 지시서 작성 계획
+    auto_sections: list[str] = []  # (kind=confirm_brief) 시스템이 자동으로 쓰는 섹션 (수정 불가)
+
+    # (done, select_images, confirm_brief) 지금까지의 처리 결과
     analysis: InputAnalysis | None = None  # 입력 분석 결과
     guidelines: list[Guideline] = []  # RAG 로 찾은 관련 내부 가이드
     categories: list[ReferenceCategory] = []  # 사용자가 확정한 레퍼런스 카테고리 (candidates 의 topic 과 같은 이름)
@@ -66,3 +104,5 @@ class AgentResponse(BaseModel):
     candidates: list[Candidate] = []  # 카테고리별로 찾아 검토를 통과한 레퍼런스 이미지 (topic 이 카테고리 이름)
     rejected_candidates: list[Candidate] = []  # 검토에서 부적합으로 걸러진 이미지 (review 에 이유)
     source_errors: list[str] = []  # 응답하지 않은 검색 출처
+    selected_ids: list[str] = []  # 사용자가 고른 이미지 id
+    output: OutputSummary | None = None  # (done) 저장된 결과 폴더와 지시서

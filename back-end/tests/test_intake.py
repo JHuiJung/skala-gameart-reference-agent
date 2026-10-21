@@ -5,7 +5,7 @@ import pytest
 from app.agent import intake, runner
 from app.agent.checklist import CHECKLISTS, UNDECIDED
 from tests.fakes import FakeClient
-from tests.graph_fakes import extracted, start_state
+from tests.graph_fakes import ans, extracted, start_state, to_select_images
 
 
 def test_every_type_has_unique_checklist_keys():
@@ -59,7 +59,7 @@ def test_missing_items_are_asked_then_unanswered_become_undecided(fake_llm):
 
     async def flow():
         first = await runner.start(start_state())
-        second = await runner.resume(first.thread_id, {"function": "조명"}, None)  # interaction 은 답하지 않음
+        second = await runner.resume(ans(first.thread_id, answers={"function": "조명"}))  # interaction 은 답하지 않음
         return first, second
 
     first, second = asyncio.run(flow())
@@ -75,7 +75,7 @@ def test_empty_answers_do_not_repeat_the_same_questions(fake_llm):
 
     async def flow():
         first = await runner.start(start_state())
-        return first, await runner.resume(first.thread_id, {}, None)
+        return first, await runner.resume(ans(first.thread_id, answers={}))
 
     first, second = asyncio.run(flow())
 
@@ -89,7 +89,7 @@ def test_unknown_type_asks_type_first(fake_llm):
 
     async def flow():
         first = await runner.start(start_state())
-        second = await runner.resume(first.thread_id, {"asset_type": "prop"}, None)
+        second = await runner.resume(ans(first.thread_id, answers={"asset_type": "prop"}))
         return first, second
 
     first, second = asyncio.run(flow())
@@ -100,43 +100,32 @@ def test_unknown_type_asks_type_first(fake_llm):
     assert second.asset_type == "prop" and second.kind == "confirm_categories"
 
 
-def test_full_flow_confirm_categories_then_search(fake_llm):
+def test_confirming_categories_runs_search_and_review_then_waits_for_image_selection(fake_llm):
     fake_llm("prop", extracted(scale="a", function="b", interaction="c"))
+    selecting = asyncio.run(to_select_images(per_category=3))
 
-    async def flow():
-        first = await runner.start(start_state())
-        return await runner.resume(first.thread_id, {}, ["배경"], 3)
-
-    done = asyncio.run(flow())
-
-    assert done.status == "done"
-    assert done.analysis.subject == "테스트 대상"
-    assert [c.name for c in done.categories] == ["배경"]
-    assert [(c.topic, c.image_url) for c in done.candidates] == [("배경", "https://img/snowy field")]
-    assert done.candidates[0].score == 0.9 and done.candidates[0].review == "눈 덮인 들판이 분명함"  # 검토 점수와 이유
-    assert done.rejected_candidates == []
-    assert done.exclude_terms == ["cartoon", "modern"]  # 세계관 가이드가 금지한 단어가 합쳐진다
-    assert done.categories[0].applied_rules == ["중세 후기 기준"]
+    assert selecting.status == "needs_input" and selecting.kind == "select_images"
+    assert selecting.analysis.subject == "테스트 대상"
+    assert [c.name for c in selecting.categories] == ["배경"]
+    assert [(c.topic, c.image_url) for c in selecting.candidates] == [("배경", "https://img/snowy field")]
+    assert selecting.candidates[0].score == 0.9 and selecting.candidates[0].review == "눈 덮인 들판이 분명함"  # 검토 점수와 이유
+    assert selecting.rejected_candidates == []
+    assert selecting.exclude_terms == ["cartoon", "modern"]  # 세계관 가이드가 금지한 단어가 합쳐진다
+    assert selecting.categories[0].applied_rules == ["중세 후기 기준"]
 
 
 def test_wrong_answer_kind_is_rejected(fake_llm):
     fake_llm("prop", extracted(scale="a", function="b", interaction="c"))
 
-    async def flow(answers, categories):
+    async def flow(**fields):
         first = await runner.start(start_state())  # 카테고리 확정을 기다리는 상태
-        await runner.resume(first.thread_id, answers, categories)
+        await runner.resume(ans(first.thread_id, **fields))
 
-    with pytest.raises(runner.WrongAnswerKind):
-        asyncio.run(flow({"scale": "x"}, None))  # 질문 답변을 보냄
+    for wrong in ({"answers": {"scale": "x"}}, {"selected_ids": ["a"]}, {"categories": ["배경"], "selected_ids": ["a"]}):
+        with pytest.raises(runner.WrongAnswerKind):
+            asyncio.run(flow(**wrong))  # 다른 종류의 답, 또는 두 종류를 동시에 보냄
 
 
-def test_resume_twice_is_rejected(fake_llm):
-    fake_llm("prop", extracted(scale="a", function="b", interaction="c"))
-
-    async def flow():
-        first = await runner.start(start_state())
-        await runner.resume(first.thread_id, {}, ["배경"])  # 끝까지 실행됨
-        await runner.resume(first.thread_id, {}, ["배경"])  # 이미 끝난 작업
-
+def test_resume_unknown_thread_is_rejected(fake_llm):
     with pytest.raises(runner.ThreadNotWaiting):
-        asyncio.run(flow())
+        asyncio.run(runner.resume(ans("nope", categories=["배경"])))

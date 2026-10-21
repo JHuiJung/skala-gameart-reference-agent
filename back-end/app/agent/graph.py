@@ -3,6 +3,13 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.brief import (
+    confirm_brief,
+    draft_brief_plan,
+    save_references,
+    select_images,
+    write_brief,
+)
 from app.agent.intake import (
     ask_details,
     ask_type,
@@ -33,6 +40,9 @@ NODE_LABELS = {
     "finalize_categories": "카테고리 검색어 준비",
     "search_images": "웹 이미지 검색",
     "review_images": "이미지 적합성 검토",
+    "draft_brief_plan": "지시서 작성 계획 수립",
+    "save_references": "레퍼런스 이미지 저장",
+    "write_brief": "지시서 작성",
 }
 
 builder = StateGraph(AgentState)
@@ -48,6 +58,11 @@ builder.add_node("confirm_categories", confirm_categories)
 builder.add_node("finalize_categories", finalize_categories)
 builder.add_node("search_images", search_images)
 builder.add_node("review_images", review_images)
+builder.add_node("select_images", select_images)
+builder.add_node("draft_brief_plan", draft_brief_plan)
+builder.add_node("confirm_brief", confirm_brief)
+builder.add_node("save_references", save_references)
+builder.add_node("write_brief", write_brief)
 
 # 입력 확인: 종류 분류 → (불명확하면 질문) → 필수 항목 추출 → (부족하면 질문)
 builder.add_edge(START, "classify_input")
@@ -64,7 +79,14 @@ builder.add_edge("ground_categories", "confirm_categories")
 builder.add_edge("confirm_categories", "finalize_categories")
 builder.add_edge("finalize_categories", "search_images")
 builder.add_edge("search_images", "review_images")
-builder.add_edge("review_images", END)
+builder.add_edge("review_images", "select_images")
+
+# 지시서: 이미지 선택(사용자) → 작성 계획 → 계획 승인(사용자) → 이미지 저장 → 지시서 작성
+builder.add_edge("select_images", "draft_brief_plan")
+builder.add_edge("draft_brief_plan", "confirm_brief")
+builder.add_edge("confirm_brief", "save_references")
+builder.add_edge("save_references", "write_brief")
+builder.add_edge("write_brief", END)
 
 # interrupt 로 멈춘 그래프를 이어서 실행하려면 상태를 저장하는 체크포인터가 필요하다.
 # InMemorySaver 는 서버를 재시작하면 사라지므로 개발용이다. 배포 시에는 DB 기반 체크포인터로 바꾼다.
@@ -72,7 +94,10 @@ builder.add_edge("review_images", END)
 _serde = JsonPlusSerializer(
     allowed_msgpack_modules=[
         ("app.agent.state", name)
-        for name in ("InputAnalysis", "Guideline", "ReferencePlan", "ReferenceCategory", "Candidate")
+        for name in (
+            "InputAnalysis", "Guideline", "ReferencePlan", "ReferenceCategory", "Candidate",
+            "BriefPlan", "BriefSection", "SavedReference",
+        )
     ]
 )
 graph = builder.compile(checkpointer=InMemorySaver(serde=_serde))

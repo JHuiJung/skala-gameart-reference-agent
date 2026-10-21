@@ -133,3 +133,6 @@ docker-compose.override.yml
 
 # Vector DB (Chroma)
 vector_db/
+
+# 지시서 작업 결과 (사용자가 만든 산출물)
+result/

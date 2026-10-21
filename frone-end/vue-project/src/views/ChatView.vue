@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import ChatMessage from '@/components/ChatMessage.vue'
-import { sendAnswers, sendCategories, sendMessage } from '@/api/chat'
+import { sendAnswers, sendBrief, sendCategories, sendMessage, sendSelection } from '@/api/chat'
 
 const messages = ref([])
 const busy = ref(false)
@@ -101,15 +101,22 @@ async function runAgent(call, extra = {}) {
       const goal = result.goal ? `제가 이해한 요청: ${result.goal}\n\n` : ''
       reply.text = `${goal}${TYPE_LABEL[result.asset_type]} 제작에 필요한 레퍼런스를 이렇게 나눠 봤어요.`
       reply.proposed = result.proposed_categories
-    } else if (result.status === 'needs_input') {
-      reply.text = formatQuestionIntro(result)
-      reply.questions = result.questions
-    } else {
-      reply.text = formatResult(result)
+    } else if (result.status === 'needs_input' && result.kind === 'select_images') {
+      reply.text = `${formatResult(result)}\n\n마음에 드는 레퍼런스 이미지를 클릭해서 골라주세요. 고른 이미지로 지시서를 만들어요.`
       reply.categories = result.categories
       reply.candidates = result.candidates
       reply.rejected = result.rejected_candidates
       reply.sourceErrors = result.source_errors
+      reply.selectable = true
+    } else if (result.status === 'needs_input' && result.kind === 'confirm_brief') {
+      reply.text = '지시서에 이런 내용을 쓰려고 해요. 확인하고 필요하면 고쳐주세요. 괜찮으면 \'이대로 작성 시작\'을 눌러주세요.'
+      reply.briefPlan = { sections: result.brief_sections, autoSections: result.auto_sections }
+    } else if (result.status === 'needs_input') {
+      reply.text = formatQuestionIntro(result)
+      reply.questions = result.questions
+    } else {
+      reply.text = '지시서를 만들었어요.'
+      reply.output = result.output
     }
   } catch (err) {
     finishSteps(reply)
@@ -137,6 +144,29 @@ function onConfirm({ message, categories, perCategory }) {
   )
 }
 
+// 이미지를 골라 보내면 사용자 말풍선으로 남기고, 지시서 작성 계획 단계로 이어서 실행한다
+function onSelect({ message, selectedIds, saveUnverified }) {
+  const chosen = message.candidates.filter((c) => selectedIds.includes(c.id))
+  const lines = (message.categories ?? [])
+    .map((cat) => ({ name: cat.name, count: chosen.filter((c) => c.topic === cat.name).length }))
+    .filter((g) => g.count)
+    .map((g) => `${g.name} ${g.count}장`)
+  const note = saveUnverified ? '\n라이선스를 확인하지 못한 이미지도 파일로 저장' : ''
+  messages.value.push({ role: 'user', text: `선택한 이미지 ${chosen.length}장\n${lines.join(', ')}${note}` })
+  return runAgent((onStatus, onDetail) =>
+    sendSelection({ threadId: message.threadId, selectedIds, saveUnverified, onStatus, onDetail }),
+  )
+}
+
+// 지시서 작성 계획을 승인하면 사용자 말풍선으로 남기고, 이미지 저장과 지시서 작성을 시작한다
+function onBrief({ message, sections, notes }) {
+  const extra = notes ? `\n추가 요청: ${notes}` : ''
+  messages.value.push({ role: 'user', text: `지시서 작성 계획 확인 (섹션 ${sections.length}개)${extra}` })
+  return runAgent((onStatus, onDetail) =>
+    sendBrief({ threadId: message.threadId, sections, notes, onStatus, onDetail }),
+  )
+}
+
 function onAnswer({ message, answers }) {
   const labels = Object.fromEntries(message.questions.map((q) => [q.key, q.label]))
   const lines = Object.entries(answers)
@@ -156,7 +186,8 @@ function onAnswer({ message, answers }) {
     <div v-if="!isEmpty" ref="scroller" class="scroller">
       <div class="messages">
         <ChatMessage v-for="(m, i) in messages" :key="i" :message="m" :now="now" :busy="busy"
-          @answer="onAnswer" @confirm="onConfirm" />
+          @answer="onAnswer" @confirm="onConfirm" @select="onSelect"
+          @brief="onBrief" />
       </div>
     </div>
 
