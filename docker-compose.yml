@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: back-end/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app            # 코드 수정 시 uvicorn --reload 로 자동 반영
+      - ./vector_db:/app/vector_db
+
+  frontend:
+    build: ./frone-end/vue-project
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frone-end/vue-project:/app
+      - /app/node_modules  # 호스트 node_modules 가 컨테이너 것을 덮어쓰지 않도록
+    depends_on:
+      - backend

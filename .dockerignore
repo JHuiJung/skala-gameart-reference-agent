@@ -1,0 +1,5 @@
+.venv/
+.git/
+**/node_modules/
+vector_db/
+__pycache__/
