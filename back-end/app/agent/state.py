@@ -29,6 +29,14 @@ class Guideline(BaseModel):
     section: str = Field(description="문서 안의 섹션 제목")
 
 
+class GuidelineRouting(BaseModel):
+    """[2단계 중간 결과] 입력에 관련된 내부 가이드 카테고리를 LLM 이 고른 것."""
+
+    categories: list[Literal["world", "mood", "background", "monster", "color", "modeling", "texture", "naming"]] = Field(
+        description="검색할 가이드 카테고리"
+    )
+
+
 class SearchPlan(BaseModel):
     """[3단계 결과] 분석 내용과 가이드를 반영한 웹 이미지 검색 계획."""
 

@@ -37,7 +37,13 @@ function finishSteps(reply) {
   if (last && !last.endedAt) last.endedAt = Date.now()
 }
 
-// 입력 분석 결과를 사람이 읽기 좋은 텍스트로 만든다
+// 분석 결과와 관련 가이드를 사람이 읽기 좋은 텍스트로 만든다
+function formatResult({ analysis, guidelines }) {
+  const guideLines = guidelines.map((g) => `· ${g.file} > ${g.section}`)
+  const guideText = guideLines.length ? `\n\n참고한 내부 가이드\n${guideLines.join('\n')}` : ''
+  return formatAnalysis(analysis) + guideText
+}
+
 function formatAnalysis(a) {
   const rows = [
     ['대상', a.subject],
@@ -61,7 +67,7 @@ async function onSend({ text, image, imageUrl }) {
   try {
     const result = await sendMessage({ text, image, onStatus: (label) => setStatus(reply, label) })
     finishSteps(reply)
-    reply.text = formatAnalysis(result.analysis)
+    reply.text = formatResult(result)
   } catch (err) {
     finishSteps(reply)
     reply.error = true

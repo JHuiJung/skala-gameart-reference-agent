@@ -1,15 +1,15 @@
 import base64
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-
-load_dotenv()  # 로컬 실행 시 프로젝트 루트의 .env 로드 (Docker 는 env_file 사용)
 
 from app.agent.graph import graph
 from app.dependencies import get_upload_form
 from app.schemas import UploadForm, UploadResponse
+
+load_dotenv()  # 로컬 실행 시 프로젝트 루트의 .env 로드 (Docker 는 env_file 사용)
 
 app = FastAPI()
 
@@ -38,4 +38,5 @@ async def upload(form: Annotated[UploadForm, Depends(get_upload_form)], image: U
         image_name=image.filename,
         image_size=len(data),
         analysis=result["analysis"],
+        guidelines=result["guidelines"],
     )
