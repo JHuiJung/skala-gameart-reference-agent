@@ -1,0 +1,53 @@
+/* 디자인 토큰: Moss Fog 팔레트 (배경 / 서피스 / 텍스트 / 포인트 4색 기반) */
+:root {
+  --bg: #f2f4f0;
+  --surface: #e3e8e1;
+  --text: #232a26;
+  --accent: #5f7d6b;
+
+  /* 4색에서 파생한 보조 값 */
+  --accent-strong: color-mix(in srgb, var(--accent) 80%, var(--text));
+  --text-muted: color-mix(in srgb, var(--text) 62%, var(--bg));
+  --border: color-mix(in srgb, var(--text) 14%, var(--bg));
+
+  --radius: 16px;
+  --content-width: 760px;
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
+    'Segoe UI', 'Noto Sans KR', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 2px;
+}
