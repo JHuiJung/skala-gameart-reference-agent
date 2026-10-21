@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent.state import Candidate
-from app.schemas import UploadForm
+from app.schemas import AnswerRequest, UploadForm
 
 
 def test_upload_form_accepts_text():
@@ -24,3 +24,15 @@ def test_candidate_license_defaults_to_unclear():
 def test_candidate_rejects_unknown_license():
     with pytest.raises(ValidationError):
         Candidate(id="c1", image_url="u", source_url="s", license="free")
+
+
+def test_answer_request_cleans_categories():
+    req = AnswerRequest(thread_id="t", categories=[" 겨울 배경 ", "", "소품"])
+    assert req.categories == ["겨울 배경", "소품"]
+    assert AnswerRequest(thread_id="t").categories is None  # 질문 답변만 보내는 경우
+
+
+@pytest.mark.parametrize("names", [[], ["  "], ["a"] * 9, ["가" * 41]])
+def test_answer_request_rejects_bad_categories(names):
+    with pytest.raises(ValidationError):
+        AnswerRequest(thread_id="t", categories=names)

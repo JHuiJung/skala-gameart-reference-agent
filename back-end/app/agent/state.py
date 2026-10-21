@@ -1,10 +1,48 @@
 """LangGraph 에이전트가 노드 사이에서 주고받는 상태(State) 정의.
-  입력 → analysis → guidelines → search_plan → candidates → selected_ids → 결과 파일
+  입력 → 종류·필수 항목 확인 → analysis → guidelines → 카테고리 제안·확정 → candidates → 결과 파일
 각 노드는 자기 단계의 필드만 채워서 반환하고, LangGraph 가 나머지 필드와 합쳐 준다.
 """
 from typing import Literal, TypedDict
 
 from pydantic import BaseModel, Field
+
+
+class AssetClassification(BaseModel):
+    """[0단계 결과] 사용자 입력이 어떤 종류의 에셋을 만들려는 것인지 분류한 결과."""
+
+    asset_type: Literal["character", "background", "prop", "ui", "unknown"] = Field(
+        description="character(캐릭터·몬스터·NPC), background(배경·맵·지형), prop(소품·아이템), ui, 판단 불가면 unknown"
+    )
+
+
+class ExtractedField(BaseModel):
+    """입력에서 찾아낸 체크리스트 항목 하나."""
+
+    key: str = Field(description="체크리스트 항목 key")
+    value: str = Field(description="입력에 명시된 내용. 입력에 없으면 빈 문자열")
+
+
+class ExtractedDetails(BaseModel):
+    """[0단계 결과] 입력 텍스트/이미지에서 종류별 필수 항목을 추출한 결과."""
+
+    items: list[ExtractedField]
+
+
+class Option(BaseModel):
+    """사용자가 고를 수 있는 선택지 하나."""
+
+    value: str
+    label: str
+
+
+class Question(BaseModel):
+    """에이전트가 사용자에게 되묻는 질문 하나. (API 응답으로 그대로 전달된다)"""
+
+    key: str = Field(description="답변을 돌려받을 때 쓰는 항목 key")
+    label: str = Field(description="항목 이름 (예: 의상)")
+    question: str = Field(description="사용자에게 보여줄 질문")
+    hint: str = Field(default="", description="무엇을 적으면 되는지 예시")
+    options: list[Option] = Field(default_factory=list, description="선택지가 있으면 채운다")
 
 
 class InputAnalysis(BaseModel):
@@ -37,12 +75,25 @@ class GuidelineRouting(BaseModel):
     )
 
 
-class SearchPlan(BaseModel):
-    """[3단계 결과] 분석 내용과 가이드를 반영한 웹 이미지 검색 계획."""
+class ReferenceCategory(BaseModel):
+    """[3단계] 레퍼런스를 찾을 카테고리 하나 (예: 겨울 배경, 방한 의상, 코코아 소품)."""
 
-    queries: list[str] = Field(description="검색 키워드(영문 권장)")
-    exclude_terms: list[str] = Field(default_factory=list, description="검색에서 제외할 단어")
-    topics: list[str] = Field(default_factory=list, description="결과를 분류할 주제 폴더 후보")
+    name: str = Field(description="사용자에게 보여줄 카테고리 이름 (한국어, 짧게)")
+    reason: str = Field(default="", description="이 카테고리가 왜 필요한지 한 문장")
+    queries: list[str] = Field(default_factory=list, description="이미지 검색 키워드 2~3개 (영문)")
+
+
+class ReferencePlan(BaseModel):
+    """[3단계 결과] AI 가 제안하는 레퍼런스 카테고리 목록. 사용자가 확인·수정하기 전의 초안이다."""
+
+    categories: list[ReferenceCategory] = Field(description="레퍼런스 카테고리 4~6개")
+    exclude_terms: list[str] = Field(default_factory=list, description="검색에서 제외할 단어 (모든 카테고리 공통)")
+
+
+class CategoryExpansion(BaseModel):
+    """사용자가 새로 추가한 카테고리에 대해 LLM 이 만든 이유와 검색 키워드."""
+
+    categories: list[ReferenceCategory]
 
 
 class Candidate(BaseModel):
@@ -52,10 +103,14 @@ class Candidate(BaseModel):
     image_url: str = Field(description="이미지 주소")
     source_url: str = Field(description="이미지가 있던 페이지 주소")
     source_name: str = Field(default="", description="출처 사이트 이름")
+    thumbnail_url: str = Field(default="", description="화면 표시용 작은 이미지 주소")
     license: Literal["confirmed", "unclear", "restricted"] = Field(
         default="unclear", description="라이선스 확인 상태 (unclear 는 검토 대상으로 표시)"
     )
-    topic: str = Field(default="", description="분류된 주제 (폴더명)")
+    license_detail: str = Field(default="", description="라이선스 이름 (예: CC BY 2.0, Public domain)")
+    creator: str = Field(default="", description="저작자 (표기 의무가 있는 라이선스에 필요)")
+    title: str = Field(default="", description="이미지 제목")
+    topic: str = Field(default="", description="이 이미지를 찾은 레퍼런스 카테고리 이름")
     tags: list[str] = Field(default_factory=list, description="태그")
     reason: str = Field(default="", description="선정 이유")
     score: float = Field(default=0.0, description="요구사항·가이드와의 관련성 점수 (0~1)")
@@ -69,11 +124,18 @@ class AgentState(TypedDict, total=False):
     image_b64: str | None  # 첨부 이미지(base64). 없으면 None (텍스트만 입력)
     image_mime: str | None  # 첨부 이미지 MIME 타입 (예: image/png)
 
+    # ── 입력 확인 (종류 분류 + 필수 항목 점검) ───────────────────
+    asset_type: str  # character | background | prop | ui | unknown(분류 불가, 사용자에게 되묻는다)
+    details: dict[str, str]  # 종류별 필수 항목의 값. 사용자가 답하지 않은 항목은 "미정"
+
     # ── 처리 중간 결과 ───────────────────────────────────────
     analysis: InputAnalysis  # 입력 분석 결과
     guidelines: list[Guideline]  # RAG 로 찾은 내부 가이드
-    search_plan: SearchPlan  # 웹 검색 계획
+    reference_plan: ReferencePlan  # AI 가 제안한 레퍼런스 카테고리 초안
+    confirmed_names: list[str]  # 사용자가 확인·수정해서 확정한 카테고리 이름
+    final_categories: list[ReferenceCategory]  # 확정된 카테고리 (검색 키워드 포함) - 이것으로 검색한다
     candidates: list[Candidate]  # 사용자에게 보여줄 후보 이미지
+    source_errors: list[str]  # 검색 출처 중 실패한 곳 (일부 실패해도 나머지 결과로 진행)
 
     # ── 사용자 선택 (후보 확인 후 이어서 실행할 때 채움) ──────────
     selected_ids: list[str]  # 사용자가 승인한 후보 id

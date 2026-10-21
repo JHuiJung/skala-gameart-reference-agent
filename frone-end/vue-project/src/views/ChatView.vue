@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
 import ChatInput from '@/components/ChatInput.vue'
 import ChatMessage from '@/components/ChatMessage.vue'
-import { sendMessage } from '@/api/chat'
+import { sendAnswers, sendCategories, sendMessage } from '@/api/chat'
 
 const messages = ref([])
 const busy = ref(false)
@@ -37,12 +37,30 @@ function finishSteps(reply) {
   if (last && !last.endedAt) last.endedAt = Date.now()
 }
 
-// 분석 결과, 관련 가이드, 검색 계획을 사람이 읽기 좋은 텍스트로 만든다
-function formatResult({ analysis, guidelines, search_plan: plan }) {
+const TYPE_LABEL = { character: '캐릭터', background: '배경', prop: '소품', ui: 'UI' }
+
+// 지금까지 확인된 필수 항목을 "항목: 값" 목록으로 만든다 (비어 있거나 '미정'인 것은 제외)
+function formatDetails(details, labels) {
+  return Object.entries(details)
+    .filter(([, v]) => v && v !== '미정')
+    .map(([k, v]) => `· ${labels[k]}: ${v}`)
+    .join('\n')
+}
+
+// 에이전트가 되묻는 상황의 안내 문구
+function formatQuestionIntro({ asset_type: type, questions, details, detail_labels: labels }) {
+  if (type === 'unknown') return '입력만으로는 어떤 종류인지 알 수 없었어요. 종류를 골라주세요.'
+  const known = formatDetails(details, labels)
+  const knownText = known ? `\n\n확인된 내용\n${known}` : ''
+  return `${TYPE_LABEL[type]} 제작에 필요한 정보 중 ${questions.length}가지가 빠져 있어요.${knownText}`
+}
+
+// 분석 결과와 관련 가이드를 사람이 읽기 좋은 텍스트로 만든다
+function formatResult({ asset_type: type, analysis, guidelines, exclude_terms: excluded }) {
   const guideLines = guidelines.map((g) => `· ${g.file} > ${g.section}`)
   const guideText = guideLines.length ? `\n\n참고한 내부 가이드\n${guideLines.join('\n')}` : ''
-  const planText = `\n\n검색 계획\n키워드: ${plan.queries.join(', ')}\n제외어: ${plan.exclude_terms.join(', ')}\n분류 폴더: ${plan.topics.join(', ')}`
-  return formatAnalysis(analysis) + guideText + planText
+  const excludeText = excluded.length ? `\n\n검색에서 제외한 단어: ${excluded.join(', ')}` : ''
+  return `종류: ${TYPE_LABEL[type]}\n` + formatAnalysis(analysis) + guideText + excludeText
 }
 
 function formatAnalysis(a) {
@@ -58,17 +76,29 @@ function formatAnalysis(a) {
   return rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n')
 }
 
-async function onSend({ text, image, imageUrl }) {
-  messages.value.push({ role: 'user', text, imageUrl })
+// 에이전트 요청 하나를 실행하고 진행 단계, 결과(또는 질문), 오류를 응답 메시지에 반영한다
+async function runAgent(call) {
   messages.value.push({ role: 'assistant', text: '', steps: [] })
   const reply = messages.value[messages.value.length - 1]
   busy.value = true
   scrollToBottom()
 
   try {
-    const result = await sendMessage({ text, image, onStatus: (label) => setStatus(reply, label) })
+    const result = await call((label) => setStatus(reply, label))
     finishSteps(reply)
-    reply.text = formatResult(result)
+    reply.threadId = result.thread_id
+    if (result.status === 'needs_input' && result.kind === 'confirm_categories') {
+      reply.text = `${TYPE_LABEL[result.asset_type]} 제작에 필요한 레퍼런스를 이렇게 나눠 봤어요.`
+      reply.proposed = result.proposed_categories
+    } else if (result.status === 'needs_input') {
+      reply.text = formatQuestionIntro(result)
+      reply.questions = result.questions
+    } else {
+      reply.text = formatResult(result)
+      reply.categories = result.categories
+      reply.candidates = result.candidates
+      reply.sourceErrors = result.source_errors
+    }
   } catch (err) {
     finishSteps(reply)
     reply.error = true
@@ -78,6 +108,27 @@ async function onSend({ text, image, imageUrl }) {
     scrollToBottom()
   }
 }
+
+function onSend({ text, image, imageUrl }) {
+  messages.value.push({ role: 'user', text, imageUrl })
+  return runAgent((onStatus) => sendMessage({ text, image, onStatus }))
+}
+
+// 질문 폼에서 답을 보내면 사용자 말풍선으로 남기고, 같은 작업을 이어서 실행한다
+// 카테고리 확인 폼에서 확정하면 사용자 말풍선으로 남기고, 확정한 카테고리로 이미지 검색을 이어서 실행한다
+function onConfirm({ message, categories }) {
+  messages.value.push({ role: 'user', text: `검색할 카테고리: ${categories.join(', ')}` })
+  return runAgent((onStatus) => sendCategories({ threadId: message.threadId, categories, onStatus }))
+}
+
+function onAnswer({ message, answers }) {
+  const labels = Object.fromEntries(message.questions.map((q) => [q.key, q.label]))
+  const lines = Object.entries(answers)
+    .filter(([, v]) => v)
+    .map(([k, v]) => (k === 'asset_type' ? TYPE_LABEL[v] : `${labels[k]}: ${v}`))
+  messages.value.push({ role: 'user', text: lines.join('\n') || '(모두 미정으로 둘게요)' })
+  return runAgent((onStatus) => sendAnswers({ threadId: message.threadId, answers, onStatus }))
+}
 </script>
 
 <template>
@@ -86,7 +137,8 @@ async function onSend({ text, image, imageUrl }) {
 
     <div v-if="!isEmpty" ref="scroller" class="scroller">
       <div class="messages">
-        <ChatMessage v-for="(m, i) in messages" :key="i" :message="m" :now="now" />
+        <ChatMessage v-for="(m, i) in messages" :key="i" :message="m" :now="now" :busy="busy"
+          @answer="onAnswer" @confirm="onConfirm" />
       </div>
     </div>
 

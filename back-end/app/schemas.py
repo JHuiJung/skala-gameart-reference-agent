@@ -1,7 +1,9 @@
 """API 요청/응답 데이터 구조를 정의하는 Pydantic 스키마 모음."""
-from pydantic import BaseModel, Field
+from typing import Literal
 
-from app.agent.state import Guideline, InputAnalysis, SearchPlan
+from pydantic import BaseModel, Field, field_validator
+
+from app.agent.state import Candidate, Guideline, InputAnalysis, Question, ReferenceCategory
 
 
 class UploadForm(BaseModel):
@@ -14,13 +16,49 @@ class UploadForm(BaseModel):
     text: str = Field(min_length=1, max_length=2000, description="사용자 설명 텍스트")
 
 
-class UploadResponse(BaseModel):
-    """[응답] POST /upload 처리 결과."""
+class AnswerRequest(BaseModel):
+    """[요청] POST /answer 에서 에이전트의 질문에 대한 사용자 답변."""
 
-    message: str  # 처리 결과 메시지 (예: "업로드 완료")
-    text: str  # 서버가 받은 텍스트 (입력 그대로)
-    image_name: str  # 업로드된 이미지의 원본 파일명
-    image_size: int  # 업로드된 이미지의 크기 (bytes)
-    analysis: InputAnalysis  # 에이전트의 입력 분석 결과
-    guidelines: list[Guideline]  # RAG 로 찾은 관련 내부 가이드
-    search_plan: SearchPlan  # 웹 이미지 검색 계획
+    thread_id: str  # 질문을 받았던 응답의 thread_id (어느 작업을 이어갈지)
+    # kind=questions 에 대한 답: 질문의 key -> 사용자가 입력한 답. 비워 둔 항목은 "미정"으로 처리된다
+    answers: dict[str, str] = {}
+    # kind=confirm_categories 에 대한 답: 사용자가 확정한 카테고리 이름 (제안에서 뺀 것은 제외, 새로 추가한 것은 포함)
+    categories: list[str] | None = None
+
+    @field_validator("categories")
+    @classmethod
+    def clean_categories(cls, names):
+        if names is None:
+            return None
+        cleaned = [n.strip() for n in names if n.strip()]
+        if not 1 <= len(cleaned) <= 8:
+            raise ValueError("카테고리는 1~8개여야 합니다.")
+        if any(len(n) > 40 for n in cleaned):
+            raise ValueError("카테고리 이름은 40자 이하여야 합니다.")
+        return cleaned
+
+
+class AgentResponse(BaseModel):
+    """[응답] /upload, /answer 공통 응답.
+
+    status 가 needs_input 이면 questions 에 답해야 할 질문이 있고,
+    done 이면 처리가 끝나 아래 결과 필드가 채워져 있다.
+    """
+
+    status: Literal["needs_input", "done"]
+    kind: Literal["questions", "confirm_categories"] | None = None  # (needs_input) 어떤 종류의 답을 기다리는지
+    thread_id: str  # 이 작업의 식별자. 질문에 답할 때 /answer 로 다시 보낸다
+    asset_type: str | None = None  # character | background | prop | ui | unknown
+    details: dict[str, str] = {}  # 지금까지 확인된 필수 항목 값 (key -> 값)
+    detail_labels: dict[str, str] = {}  # 필수 항목 key -> 화면에 보여줄 이름
+
+    questions: list[Question] = []  # (kind=questions) 사용자에게 되묻는 질문
+    proposed_categories: list[ReferenceCategory] = []  # (kind=confirm_categories) AI 가 제안한 레퍼런스 카테고리
+
+    # (done) 처리 결과
+    analysis: InputAnalysis | None = None  # 입력 분석 결과
+    guidelines: list[Guideline] = []  # RAG 로 찾은 관련 내부 가이드
+    categories: list[ReferenceCategory] = []  # 사용자가 확정한 레퍼런스 카테고리 (candidates 의 topic 과 같은 이름)
+    exclude_terms: list[str] = []  # 검색에서 제외한 단어
+    candidates: list[Candidate] = []  # 카테고리별로 찾은 레퍼런스 이미지 후보
+    source_errors: list[str] = []  # 응답하지 않은 검색 출처

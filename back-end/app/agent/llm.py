@@ -3,9 +3,10 @@ from functools import cache
 
 from openai import AsyncOpenAI
 
+INTAKE_MODEL = "gpt-4o-mini"  # 에셋 종류 분류, 필수 항목 추출용 (이미지 입력 지원)
 ANALYSIS_MODEL = "gpt-4o-mini"  # 입력 분석용 (이미지 입력을 지원하는 모델)
 ROUTER_MODEL = "gpt-4o-mini"  # 검색할 가이드 카테고리 선택용
-PLANNER_MODEL = "gpt-4o-mini"  # 웹 이미지 검색 계획 생성용
+PLANNER_MODEL = "gpt-4o-mini"  # 레퍼런스 카테고리 제안·보완용
 
 
 @cache
