@@ -39,4 +39,5 @@ async def upload(form: Annotated[UploadForm, Depends(get_upload_form)], image: U
         image_size=len(data),
         analysis=result["analysis"],
         guidelines=result["guidelines"],
+        search_plan=result["search_plan"],
     )

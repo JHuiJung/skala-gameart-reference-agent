@@ -34,3 +34,5 @@ def test_upload_full_flow_includes_company_rules(client, png_bytes):
     assert body["analysis"]["subject"]
     sources = {g["source_type"] for g in body["guidelines"]}
     assert sources == {"confirmed_plans", "company_rules"}
+    plan = body["search_plan"]
+    assert plan["queries"] and plan["topics"]

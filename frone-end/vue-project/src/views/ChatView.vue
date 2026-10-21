@@ -37,11 +37,12 @@ function finishSteps(reply) {
   if (last && !last.endedAt) last.endedAt = Date.now()
 }
 
-// 분석 결과와 관련 가이드를 사람이 읽기 좋은 텍스트로 만든다
-function formatResult({ analysis, guidelines }) {
+// 분석 결과, 관련 가이드, 검색 계획을 사람이 읽기 좋은 텍스트로 만든다
+function formatResult({ analysis, guidelines, search_plan: plan }) {
   const guideLines = guidelines.map((g) => `· ${g.file} > ${g.section}`)
   const guideText = guideLines.length ? `\n\n참고한 내부 가이드\n${guideLines.join('\n')}` : ''
-  return formatAnalysis(analysis) + guideText
+  const planText = `\n\n검색 계획\n키워드: ${plan.queries.join(', ')}\n제외어: ${plan.exclude_terms.join(', ')}\n분류 폴더: ${plan.topics.join(', ')}`
+  return formatAnalysis(analysis) + guideText + planText
 }
 
 function formatAnalysis(a) {

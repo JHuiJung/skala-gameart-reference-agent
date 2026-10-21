@@ -1,7 +1,7 @@
 """API 요청/응답 데이터 구조를 정의하는 Pydantic 스키마 모음."""
 from pydantic import BaseModel, Field
 
-from app.agent.state import Guideline, InputAnalysis
+from app.agent.state import Guideline, InputAnalysis, SearchPlan
 
 
 class UploadForm(BaseModel):
@@ -23,3 +23,4 @@ class UploadResponse(BaseModel):
     image_size: int  # 업로드된 이미지의 크기 (bytes)
     analysis: InputAnalysis  # 에이전트의 입력 분석 결과
     guidelines: list[Guideline]  # RAG 로 찾은 관련 내부 가이드
+    search_plan: SearchPlan  # 웹 이미지 검색 계획
