@@ -11,6 +11,7 @@ from langgraph.types import interrupt
 from app.agent.llm import PLANNER_MODEL, get_client
 from app.agent.sources import DEFAULT_SOURCES
 from app.agent.sources.base import TIMEOUT, USER_AGENT
+from app.agent.progress import emit_detail
 from app.agent.retriever import search_scoped
 from app.agent.state import (
     AgentState,
@@ -319,10 +320,16 @@ async def search_images(state: AgentState) -> dict:
                     errors.append(f"{source.name}: {type(e).__name__}")
                     return []
 
-        per_category = await asyncio.gather(*[
-            asyncio.gather(*[run(src, q) for q in cat.queries for src in DEFAULT_SOURCES])
-            for cat in categories
-        ])
+        finished = 0
+
+        async def search_category(cat):
+            nonlocal finished
+            batches = await asyncio.gather(*[run(src, q) for q in cat.queries for src in DEFAULT_SOURCES])
+            finished += 1
+            emit_detail(f"'{cat.name}' 검색 완료 ({finished}/{len(categories)})")
+            return batches
+
+        per_category = await asyncio.gather(*[search_category(cat) for cat in categories])
 
     seen: set[str] = set()  # 같은 이미지가 여러 카테고리에 중복으로 나오지 않게 한다
     candidates: list[Candidate] = []

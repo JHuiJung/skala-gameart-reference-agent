@@ -5,6 +5,21 @@ from pathlib import Path
 
 import pytest
 
+from app.agent import intake, nodes, references, review
+from app.agent.state import (
+    AssetClassification,
+    Candidate,
+    GroundedCategories,
+    Guideline,
+    GuidelineRouting,
+    ImageReview,
+    ImageVerdict,
+    InputAnalysis,
+    ReferencePlan,
+)
+from tests.fakes import FakeClient
+from tests.graph_fakes import CATEGORY
+
 # scripts/ 는 패키지가 아니므로 테스트에서 import 할 수 있게 경로를 추가한다
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
@@ -25,3 +40,49 @@ def png_bytes() -> bytes:
         + chunk(b"IDAT", zlib.compress(raw))
         + chunk(b"IEND", b"")
     )
+
+
+@pytest.fixture
+def fake_llm(monkeypatch):
+    """OpenAI, 벡터 DB 검색, 이미지 검색 출처, 이미지 내려받기를 모두 대역으로 바꿔 그래프 전체를 돌릴 수 있게 한다."""
+
+    def install(classification, details):
+        client = FakeClient({
+            AssetClassification: AssetClassification(asset_type=classification),
+            type(details): details,
+            InputAnalysis: InputAnalysis(subject="테스트 대상"),
+            GuidelineRouting: GuidelineRouting(categories=["monster"]),
+            ReferencePlan: ReferencePlan(categories=[CATEGORY], exclude_terms=["cartoon"]),
+            GroundedCategories: GroundedCategories(
+                categories=[CATEGORY.model_copy(update={"applied_rules": ["중세 후기 기준"]})], exclude_terms=["modern"]
+            ),
+            ImageReview: ImageReview(verdicts=[ImageVerdict(index=1, score=9, reason="눈 덮인 들판이 분명함")]),
+        })
+        for module in (intake, nodes, references, review):
+            monkeypatch.setattr(module, "get_client", lambda: client)
+
+        async def fake_search(query, categories):
+            return [Guideline(text="t", source_type="company_rules", category="color", file="f.md", section="s")]
+
+        monkeypatch.setattr(nodes, "search_guidelines", fake_search)
+
+        async def fake_scoped(query, source_type, categories, n_results=3):
+            return []
+
+        monkeypatch.setattr(references, "search_scoped", fake_scoped)
+
+        class FakeSource:
+            name = "Fake"
+
+            async def search(self, http, query, limit):
+                return [Candidate(id=query, image_url=f"https://img/{query}", source_url="https://s")]
+
+        monkeypatch.setattr(references, "DEFAULT_SOURCES", [FakeSource()])
+
+        async def fake_download(http, gate, candidate):
+            return "data:image/png;base64,AAAA"  # 검토용 이미지 내려받기 대역
+
+        monkeypatch.setattr(review, "_to_data_url", fake_download)
+        return client
+
+    return install

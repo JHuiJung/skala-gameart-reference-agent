@@ -2,30 +2,10 @@ import asyncio
 
 import pytest
 
-from app.agent import intake, nodes, references, review, runner
+from app.agent import intake, runner
 from app.agent.checklist import CHECKLISTS, UNDECIDED
-from app.agent.state import (
-    AssetClassification,
-    ExtractedDetails,
-    ExtractedField,
-    GroundedCategories,
-    Guideline,
-    GuidelineRouting,
-    Candidate,
-    ImageReview,
-    ImageVerdict,
-    InputAnalysis,
-    ReferenceCategory,
-    ReferencePlan,
-)
 from tests.fakes import FakeClient
-
-
-CATEGORY = ReferenceCategory(name="배경", reason="r", queries=["snowy field"])
-
-
-def extracted(**values):
-    return ExtractedDetails(items=[ExtractedField(key=k, value=v) for k, v in values.items()])
+from tests.graph_fakes import extracted, start_state
 
 
 def test_every_type_has_unique_checklist_keys():
@@ -62,56 +42,6 @@ def test_extract_details_drops_unknown_keys_and_fills_missing(monkeypatch):
 
 
 # ── 그래프 전체 흐름 (OpenAI 는 대역, interrupt/resume 은 실제 동작) ──────────────
-
-@pytest.fixture
-def fake_llm(monkeypatch):
-    def install(classification, details):
-        client = FakeClient({
-            AssetClassification: AssetClassification(asset_type=classification),
-            type(details): details,
-            InputAnalysis: InputAnalysis(subject="테스트 대상"),
-            GuidelineRouting: GuidelineRouting(categories=["monster"]),
-            ReferencePlan: ReferencePlan(categories=[CATEGORY], exclude_terms=["cartoon"]),
-            ImageReview: ImageReview(verdicts=[ImageVerdict(index=1, score=9, reason="눈 덮인 들판이 분명함")]),
-            GroundedCategories: GroundedCategories(
-                categories=[CATEGORY.model_copy(update={"applied_rules": ["중세 후기 기준"]})], exclude_terms=["modern"]
-            ),
-        })
-        monkeypatch.setattr(intake, "get_client", lambda: client)
-        monkeypatch.setattr(nodes, "get_client", lambda: client)
-        monkeypatch.setattr(references, "get_client", lambda: client)
-        monkeypatch.setattr(review, "get_client", lambda: client)
-
-        async def fake_download(http, gate, candidate):
-            return "data:image/png;base64,AAAA"  # 검토용 이미지 내려받기 대역
-
-        monkeypatch.setattr(review, "_to_data_url", fake_download)
-
-        async def fake_search(query, categories):
-            return [Guideline(text="t", source_type="company_rules", category="color", file="f.md", section="s")]
-
-        monkeypatch.setattr(nodes, "search_guidelines", fake_search)
-
-        async def fake_scoped(query, source_type, categories, n_results=3):
-            return []
-
-        monkeypatch.setattr(references, "search_scoped", fake_scoped)
-
-        class FakeSource:
-            name = "Fake"
-
-            async def search(self, http, query, limit):
-                return [Candidate(id=query, image_url=f"https://img/{query}", source_url="https://s")]
-
-        monkeypatch.setattr(references, "DEFAULT_SOURCES", [FakeSource()])
-        return client
-
-    return install
-
-
-def start_state():
-    return {"text": "입력", "image_b64": None, "image_mime": None}
-
 
 def test_complete_input_goes_straight_to_category_proposal(fake_llm):
     fake_llm("prop", extracted(scale="a", function="b", interaction="c"))

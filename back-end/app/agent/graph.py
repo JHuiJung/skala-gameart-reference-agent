@@ -22,6 +22,19 @@ from app.agent.references import (
 from app.agent.review import review_images
 from app.agent.state import AgentState
 
+# 노드 이름 -> 화면에 보여줄 단계 이름. 사용자에게 되묻는 노드(ask_*, confirm_categories)는 '작업'이 아니라서 넣지 않는다
+NODE_LABELS = {
+    "classify_input": "에셋 종류 분류",
+    "extract_details": "필수 항목 확인",
+    "analyze_input": "입력 분석",
+    "retrieve_guidelines": "내부 가이드 검색",
+    "plan_categories": "레퍼런스 카테고리 제안",
+    "ground_categories": "세계관 가이드 반영",
+    "finalize_categories": "카테고리 검색어 준비",
+    "search_images": "웹 이미지 검색",
+    "review_images": "이미지 적합성 검토",
+}
+
 builder = StateGraph(AgentState)
 builder.add_node("classify_input", classify_input)
 builder.add_node("ask_type", ask_type)

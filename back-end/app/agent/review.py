@@ -9,6 +9,7 @@ import logging
 import httpx
 
 from app.agent.llm import REVIEW_MODEL, get_client
+from app.agent.progress import emit_detail
 from app.agent.references import DEFAULT_PER_CATEGORY, LICENSE_RANK
 from app.agent.sources.base import USER_AGENT
 from app.agent.state import AgentState, Candidate, ImageReview, ReferenceCategory
@@ -141,15 +142,22 @@ async def review_images(state: AgentState) -> dict:
     errors = list(state.get("source_errors", []))
     gate = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 
+    categories = state["final_categories"]
+    finished = 0
+
+    async def review_category(cat):
+        nonlocal finished
+        result = await _review_category(
+            state, http, gate, cat, [c for c in state["candidates"] if c.topic == cat.name], want, errors
+        )
+        finished += 1
+        emit_detail(f"'{cat.name}' 검토 완료 ({finished}/{len(categories)})")
+        return result
+
     async with httpx.AsyncClient(
         timeout=DOWNLOAD_TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True
     ) as http:
-        results = await asyncio.gather(*[
-            _review_category(
-                state, http, gate, cat, [c for c in state["candidates"] if c.topic == cat.name], want, errors
-            )
-            for cat in state["final_categories"]
-        ])
+        results = await asyncio.gather(*[review_category(cat) for cat in categories])
 
     return {
         "candidates": [c for kept, _ in results for c in kept],

@@ -1,6 +1,6 @@
 <script setup>
 // 에이전트가 거친 단계 목록. 진행 중인 단계는 실시간 경과 시간, 끝난 단계는 걸린 시간을 보여준다.
-// steps: [{ label, startedAt, endedAt }]  (시간은 ms)
+// steps: [{ label, detail?, startedAt, endedAt }]  (시간은 ms). detail 은 진행 중인 단계에서만 보여준다
 defineProps({
   steps: { type: Array, required: true },
   now: { type: Number, required: true },
@@ -15,7 +15,10 @@ function seconds(step, now) {
   <ul class="steps">
     <li v-for="(step, i) in steps" :key="i" :class="{ active: !step.endedAt }">
       <span class="dot" aria-hidden="true"></span>
-      <span class="label">{{ step.label }}{{ step.endedAt ? ' 완료' : '…' }}</span>
+      <span class="label">
+        {{ step.label }}{{ step.endedAt ? ' 완료' : '…' }}
+        <span v-if="!step.endedAt && step.detail" class="detail">{{ step.detail }}</span>
+      </span>
       <span class="time">{{ seconds(step, now) }}초</span>
     </li>
   </ul>
@@ -34,7 +37,7 @@ function seconds(step, now) {
 
 li {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 10px;
 }
 
@@ -52,6 +55,12 @@ li.active {
 
 li.active .dot {
   animation: pulse 1.2s ease-in-out infinite;
+}
+
+.detail {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .time {

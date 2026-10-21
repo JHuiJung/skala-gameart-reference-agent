@@ -32,6 +32,12 @@ function setStatus(reply, label) {
   scrollToBottom()
 }
 
+// 현재 진행 중인 단계 안의 세부 진행(예: "'겨울 외피' 검색 완료 (3/5)")을 갱신한다
+function setDetail(reply, detail) {
+  const last = reply.steps[reply.steps.length - 1]
+  if (last && !last.endedAt) last.detail = detail
+}
+
 function finishSteps(reply) {
   const last = reply.steps[reply.steps.length - 1]
   if (last && !last.endedAt) last.endedAt = Date.now()
@@ -85,7 +91,10 @@ async function runAgent(call, extra = {}) {
   scrollToBottom()
 
   try {
-    const result = await call((label) => setStatus(reply, label))
+    const result = await call(
+      (label) => setStatus(reply, label),
+      (detail) => setDetail(reply, detail),
+    )
     finishSteps(reply)
     reply.threadId = result.thread_id
     if (result.status === 'needs_input' && result.kind === 'confirm_categories') {
@@ -114,7 +123,7 @@ async function runAgent(call, extra = {}) {
 
 function onSend({ text, image, imageUrl }) {
   messages.value.push({ role: 'user', text, imageUrl })
-  return runAgent((onStatus) => sendMessage({ text, image, onStatus }))
+  return runAgent((onStatus, onDetail) => sendMessage({ text, image, onStatus, onDetail }))
 }
 
 // 질문 폼에서 답을 보내면 사용자 말풍선으로 남기고, 같은 작업을 이어서 실행한다
@@ -122,7 +131,8 @@ function onSend({ text, image, imageUrl }) {
 function onConfirm({ message, categories, perCategory }) {
   messages.value.push({ role: 'user', text: `검색할 카테고리: ${categories.join(', ')}\n카테고리당 ${perCategory}개` })
   return runAgent(
-    (onStatus) => sendCategories({ threadId: message.threadId, categories, perCategory, onStatus }),
+    (onStatus, onDetail) =>
+      sendCategories({ threadId: message.threadId, categories, perCategory, onStatus, onDetail }),
     { perCategory }, // 요청한 개수보다 적게 통과했을 때 안내하기 위해 결과 메시지에 남겨 둔다
   )
 }
@@ -133,7 +143,9 @@ function onAnswer({ message, answers }) {
     .filter(([, v]) => v)
     .map(([k, v]) => (k === 'asset_type' ? TYPE_LABEL[v] : `${labels[k]}: ${v}`))
   messages.value.push({ role: 'user', text: lines.join('\n') || '(모두 미정으로 둘게요)' })
-  return runAgent((onStatus) => sendAnswers({ threadId: message.threadId, answers, onStatus }))
+  return runAgent((onStatus, onDetail) =>
+    sendAnswers({ threadId: message.threadId, answers, onStatus, onDetail }),
+  )
 }
 </script>
 
