@@ -65,20 +65,21 @@ function formatResult({ asset_type: type, analysis, guidelines, exclude_terms: e
 
 function formatAnalysis(a) {
   const rows = [
+    ['요청 이해', a.goal],
     ['대상', a.subject],
     ['분위기', a.mood.join(', ')],
     ['재질', a.materials.join(', ')],
     ['색상', a.colors.join(', ')],
     ['구도', a.composition],
     ['제외', a.exclude.join(', ')],
-    ['이미지 요약', a.summary],
+    ['이미지 현재 모습', a.summary],
   ]
   return rows.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join('\n')
 }
 
 // 에이전트 요청 하나를 실행하고 진행 단계, 결과(또는 질문), 오류를 응답 메시지에 반영한다
-async function runAgent(call) {
-  messages.value.push({ role: 'assistant', text: '', steps: [] })
+async function runAgent(call, extra = {}) {
+  messages.value.push({ role: 'assistant', text: '', steps: [], ...extra })
   const reply = messages.value[messages.value.length - 1]
   busy.value = true
   scrollToBottom()
@@ -88,7 +89,8 @@ async function runAgent(call) {
     finishSteps(reply)
     reply.threadId = result.thread_id
     if (result.status === 'needs_input' && result.kind === 'confirm_categories') {
-      reply.text = `${TYPE_LABEL[result.asset_type]} 제작에 필요한 레퍼런스를 이렇게 나눠 봤어요.`
+      const goal = result.goal ? `제가 이해한 요청: ${result.goal}\n\n` : ''
+      reply.text = `${goal}${TYPE_LABEL[result.asset_type]} 제작에 필요한 레퍼런스를 이렇게 나눠 봤어요.`
       reply.proposed = result.proposed_categories
     } else if (result.status === 'needs_input') {
       reply.text = formatQuestionIntro(result)
@@ -97,6 +99,7 @@ async function runAgent(call) {
       reply.text = formatResult(result)
       reply.categories = result.categories
       reply.candidates = result.candidates
+      reply.rejected = result.rejected_candidates
       reply.sourceErrors = result.source_errors
     }
   } catch (err) {
@@ -116,9 +119,12 @@ function onSend({ text, image, imageUrl }) {
 
 // 질문 폼에서 답을 보내면 사용자 말풍선으로 남기고, 같은 작업을 이어서 실행한다
 // 카테고리 확인 폼에서 확정하면 사용자 말풍선으로 남기고, 확정한 카테고리로 이미지 검색을 이어서 실행한다
-function onConfirm({ message, categories }) {
-  messages.value.push({ role: 'user', text: `검색할 카테고리: ${categories.join(', ')}` })
-  return runAgent((onStatus) => sendCategories({ threadId: message.threadId, categories, onStatus }))
+function onConfirm({ message, categories, perCategory }) {
+  messages.value.push({ role: 'user', text: `검색할 카테고리: ${categories.join(', ')}\n카테고리당 ${perCategory}개` })
+  return runAgent(
+    (onStatus) => sendCategories({ threadId: message.threadId, categories, perCategory, onStatus }),
+    { perCategory }, // 요청한 개수보다 적게 통과했을 때 안내하기 위해 결과 메시지에 남겨 둔다
+  )
 }
 
 function onAnswer({ message, answers }) {

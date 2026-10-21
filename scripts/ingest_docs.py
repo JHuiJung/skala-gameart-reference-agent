@@ -25,6 +25,8 @@ CATEGORY_BY_FILE = {
     "04_monster_moss_wolf.md": "monster",
     "05_monster_mist_giant.md": "monster",
     "06_monster_thorn_wisp.md": "monster",
+    "07_costume_and_materials.md": "costume",
+    "08_props_and_items.md": "prop",
     "01_color_rules.md": "color",
     "02_modeling_optimization_rules.md": "modeling",
     "03_texture_resource_rules.md": "texture",

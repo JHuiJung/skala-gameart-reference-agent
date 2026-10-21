@@ -45,3 +45,10 @@ def test_retrieve_guidelines_uses_routed_categories(monkeypatch):
 
     assert seen["categories"] == ["monster", "color"]
     assert out["guidelines"] == found
+
+
+def test_analysis_prompt_separates_goal_from_current_image():
+    # 이미지의 역할(바꿀 원본 / 맥락 자료)과 최종 목표 기준으로 채우라는 지시가 프롬프트에 있어야 한다
+    assert "goal" in nodes.ANALYSIS_PROMPT
+    assert "최종적으로 원하는 결과" in nodes.ANALYSIS_PROMPT
+    assert "바꿀 원본" in nodes.ANALYSIS_PROMPT and "맥락 자료" in nodes.ANALYSIS_PROMPT

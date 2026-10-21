@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 
 // AI 가 제안한 레퍼런스 카테고리를 사용자가 첨삭하는 폼.
 // 제안된 카테고리는 체크를 해제해서 빼고, 새 카테고리는 직접 입력해서 추가한다.
-// categories: [{ name, reason }]
+// categories: [{ name, reason, applied_rules }]  (applied_rules: 검색어에 반영한 세계관·기획 가이드 규칙)
 const props = defineProps({
   categories: { type: Array, required: true },
   disabled: { type: Boolean, default: false },
@@ -11,10 +11,13 @@ const props = defineProps({
 const emit = defineEmits(['submit'])
 
 const MAX = 8
+const MIN_IMAGES = 1
+const MAX_IMAGES = 10
 
 const checked = reactive(Object.fromEntries(props.categories.map((c) => [c.name, true])))
 const added = ref([]) // 사용자가 추가한 카테고리 이름
 const draft = ref('')
+const perCategory = ref(5) // 카테고리당 보여줄 이미지 수
 const submitted = ref(false)
 
 const selected = computed(() => [
@@ -42,7 +45,7 @@ function onDraftKeydown(e) {
 function submit() {
   if (!canSubmit.value) return
   submitted.value = true
-  emit('submit', selected.value)
+  emit('submit', { categories: selected.value, perCategory: perCategory.value })
 }
 </script>
 
@@ -59,6 +62,7 @@ function submit() {
           <span class="name">{{ c.name }}</span>
         </label>
         <span class="reason">{{ c.reason }}</span>
+        <span v-for="rule in c.applied_rules" :key="rule" class="rule">세계관 반영 · {{ rule }}</span>
       </li>
       <li v-for="name in added" :key="name" class="added">
         <label>
@@ -75,6 +79,13 @@ function submit() {
       <input v-model="draft" type="text" placeholder="카테고리 추가 (예: 눈 덮인 마을 가로등)" maxlength="40"
         :disabled="locked || selected.length >= MAX" @keydown="onDraftKeydown" />
       <button type="button" :disabled="locked || !draft.trim()" @click="addCategory">추가</button>
+    </div>
+
+    <div class="count">
+      <label for="per-category">카테고리당 이미지 수</label>
+      <input id="per-category" v-model.number="perCategory" type="range" :min="MIN_IMAGES" :max="MAX_IMAGES"
+        step="1" :disabled="locked" />
+      <output for="per-category">{{ perCategory }}개</output>
     </div>
 
     <div class="footer">
@@ -133,6 +144,12 @@ input[type='checkbox'] {
   color: var(--text-muted);
 }
 
+.rule {
+  margin-left: 24px;
+  font-size: 12px;
+  color: var(--accent-strong);
+}
+
 .added {
   display: flex !important;
   justify-content: space-between;
@@ -176,6 +193,27 @@ button:disabled,
 input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.count {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.count label {
+  cursor: default;
+  font-weight: 600;
+}
+
+.count input[type='range'] {
+  flex: 1;
+  accent-color: var(--accent-strong);
+}
+
+.count output {
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
 }
 
 .footer {

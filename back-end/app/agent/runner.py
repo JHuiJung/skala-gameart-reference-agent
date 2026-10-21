@@ -32,7 +32,7 @@ def _to_response(thread_id: str, result: dict) -> AgentResponse:
         if payload["kind"] == "confirm_categories":
             return AgentResponse(
                 status="needs_input", kind="confirm_categories",
-                proposed_categories=payload["categories"], **common,
+                proposed_categories=payload["categories"], goal=payload["goal"], **common,
             )
         return AgentResponse(status="needs_input", kind="questions", questions=payload["questions"], **common)
     plan = result.get("reference_plan")
@@ -43,6 +43,7 @@ def _to_response(thread_id: str, result: dict) -> AgentResponse:
         categories=result.get("final_categories", []),
         exclude_terms=plan.exclude_terms if plan else [],
         candidates=result.get("candidates", []),
+        rejected_candidates=result.get("rejected_candidates", []),
         source_errors=result.get("source_errors", []),
         **common,
     )
@@ -55,7 +56,9 @@ async def start(initial_state: dict) -> AgentResponse:
     return _to_response(thread_id, result)
 
 
-async def resume(thread_id: str, answers: dict[str, str], categories: list[str] | None = None) -> AgentResponse:
+async def resume(
+    thread_id: str, answers: dict[str, str], categories: list[str] | None = None, per_category: int = 5
+) -> AgentResponse:
     """사용자의 답을 전달해 멈춘 작업을 이어서 실행한다.
 
     answers 는 질문에 대한 답, categories 는 카테고리 확정에 대한 답이다. 기다리는 답의 종류와 맞아야 한다.
@@ -68,6 +71,9 @@ async def resume(thread_id: str, answers: dict[str, str], categories: list[str] 
     if (waiting_for == "confirm_categories") != (categories is not None):
         raise WrongAnswerKind(waiting_for)
 
-    value = {"categories": categories} if categories is not None else answers
+    # LangGraph 는 빈 값({})으로 재개하면 '답이 없다'고 보고 같은 질문을 다시 하므로, 항상 비어 있지 않은 구조로 감싼다
+    value = (
+        {"categories": categories, "per_category": per_category} if categories is not None else {"answers": answers}
+    )
     result = await graph.ainvoke(Command(resume=value), _config(thread_id))
     return _to_response(thread_id, result)

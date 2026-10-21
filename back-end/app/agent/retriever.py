@@ -15,7 +15,7 @@ COLLECTION = "artbrief_docs"
 EMBED_MODEL = "text-embedding-3-small"  # scripts/ingest_docs.py 의 EMBED_MODEL 과 같아야 한다
 
 # 인제스트 때 붙인 값 (scripts/ingest_docs.py 의 CATEGORY_BY_FILE 참고)
-PLAN_CATEGORIES = ["world", "mood", "background", "monster"]  # source_type = confirmed_plans
+PLAN_CATEGORIES = ["world", "mood", "background", "monster", "costume", "prop"]  # source_type = confirmed_plans
 RULE_CATEGORIES = ["color", "modeling", "texture", "naming"]  # source_type = company_rules
 
 
@@ -68,3 +68,8 @@ async def search_guidelines(
         asyncio.to_thread(_search, query, "company_rules", rule_cats, rule_k),
     )
     return plans + rules
+
+
+async def search_scoped(query: str, source_type: str, categories: list[str], n_results: int = 3) -> list[Guideline]:
+    """한 source_type(기획/규정) 안에서만 검색한다. categories 가 비어 있으면 그 source_type 전체에서 찾는다."""
+    return await asyncio.to_thread(_search, query, source_type, categories, n_results)

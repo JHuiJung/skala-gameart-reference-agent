@@ -48,13 +48,14 @@ class Question(BaseModel):
 class InputAnalysis(BaseModel):
     """[1단계 결과] 멀티모달 LLM 이 사용자 입력(텍스트/이미지)을 구조화한 내용."""
 
-    subject: str = Field(description="만들려는 대상 (예: 숲속 목조 마을)")
+    goal: str = Field(default="", description="사용자가 이번 작업에서 최종적으로 원하는 것 한 문장 (변경·변형 요구, 이미지의 역할 포함)")
+    subject: str = Field(description="최종적으로 만들려는 대상 (예: 숲속 목조 마을)")
     mood: list[str] = Field(default_factory=list, description="분위기 키워드")
     materials: list[str] = Field(default_factory=list, description="재질")
     colors: list[str] = Field(default_factory=list, description="색상")
     composition: str = Field(default="", description="구도·시점")
     exclude: list[str] = Field(default_factory=list, description="제외할 요소")
-    summary: str = Field(default="", description="이미지가 있을 때 시각적 특징 요약")
+    summary: str = Field(default="", description="첨부 이미지의 현재 모습 요약 (최종 목표와 다를 수 있음)")
 
 
 class Guideline(BaseModel):
@@ -70,7 +71,9 @@ class Guideline(BaseModel):
 class GuidelineRouting(BaseModel):
     """[2단계 중간 결과] 입력에 관련된 내부 가이드 카테고리를 LLM 이 고른 것."""
 
-    categories: list[Literal["world", "mood", "background", "monster", "color", "modeling", "texture", "naming"]] = Field(
+    categories: list[
+        Literal["world", "mood", "background", "monster", "costume", "prop", "color", "modeling", "texture", "naming"]
+    ] = Field(
         description="검색할 가이드 카테고리"
     )
 
@@ -81,6 +84,9 @@ class ReferenceCategory(BaseModel):
     name: str = Field(description="사용자에게 보여줄 카테고리 이름 (한국어, 짧게)")
     reason: str = Field(default="", description="이 카테고리가 왜 필요한지 한 문장")
     queries: list[str] = Field(default_factory=list, description="이미지 검색 키워드 2~3개 (영문)")
+    applied_rules: list[str] = Field(
+        default_factory=list, description="검색어에 반영한 세계관·기획 가이드 규칙 (짧은 한국어 문장, 가이드에 있는 내용만)"
+    )
 
 
 class ReferencePlan(BaseModel):
@@ -88,6 +94,16 @@ class ReferencePlan(BaseModel):
 
     categories: list[ReferenceCategory] = Field(description="레퍼런스 카테고리 4~6개")
     exclude_terms: list[str] = Field(default_factory=list, description="검색에서 제외할 단어 (모든 카테고리 공통)")
+
+
+class GroundedCategories(BaseModel):
+    """[3-1단계 결과] 세계관·기획 가이드를 반영해 다시 쓴 카테고리 검색어와, 가이드가 금지한 제외어."""
+
+    categories: list[ReferenceCategory]
+    era_keyword: str = Field(
+        default="", description="세계관 공통 가이드의 시대 기준을 나타내는 가장 짧고 일반적인 영문 키워드 하나 (예: medieval). 없으면 빈 문자열"
+    )
+    exclude_terms: list[str] = Field(default_factory=list, description="가이드가 금지한 요소 (영문 검색 제외어)")
 
 
 class CategoryExpansion(BaseModel):
@@ -113,7 +129,22 @@ class Candidate(BaseModel):
     topic: str = Field(default="", description="이 이미지를 찾은 레퍼런스 카테고리 이름")
     tags: list[str] = Field(default_factory=list, description="태그")
     reason: str = Field(default="", description="선정 이유")
-    score: float = Field(default=0.0, description="요구사항·가이드와의 관련성 점수 (0~1)")
+    score: float | None = Field(default=None, description="이미지 검토 점수 (0~1). 검토하지 못했으면 None")
+    review: str = Field(default="", description="이미지 검토 결과 한 줄 (적합하거나 부적합한 이유)")
+
+
+class ImageVerdict(BaseModel):
+    """이미지 한 장에 대한 검토 결과."""
+
+    index: int = Field(description="입력에서 붙인 이미지 번호")
+    score: int = Field(ge=0, le=10, description="적합도 0~10")
+    reason: str = Field(description="점수의 이유 한 문장 (한국어)")
+
+
+class ImageReview(BaseModel):
+    """[4-1단계 결과] 비전 모델이 후보 이미지들을 검토한 결과."""
+
+    verdicts: list[ImageVerdict]
 
 
 class AgentState(TypedDict, total=False):
@@ -133,8 +164,10 @@ class AgentState(TypedDict, total=False):
     guidelines: list[Guideline]  # RAG 로 찾은 내부 가이드
     reference_plan: ReferencePlan  # AI 가 제안한 레퍼런스 카테고리 초안
     confirmed_names: list[str]  # 사용자가 확인·수정해서 확정한 카테고리 이름
+    per_category: int  # 사용자가 고른 카테고리당 이미지 수 (1~10)
     final_categories: list[ReferenceCategory]  # 확정된 카테고리 (검색 키워드 포함) - 이것으로 검색한다
-    candidates: list[Candidate]  # 사용자에게 보여줄 후보 이미지
+    candidates: list[Candidate]  # 사용자에게 보여줄 후보 이미지 (이미지 검토를 통과한 것)
+    rejected_candidates: list[Candidate]  # 이미지 검토에서 부적합으로 걸러진 후보 (이유 확인용)
     source_errors: list[str]  # 검색 출처 중 실패한 곳 (일부 실패해도 나머지 결과로 진행)
 
     # ── 사용자 선택 (후보 확인 후 이어서 실행할 때 채움) ──────────

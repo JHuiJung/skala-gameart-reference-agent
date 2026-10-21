@@ -42,13 +42,13 @@ export async function sendAnswers({ threadId, answers, onStatus }) {
   return parse(await request)
 }
 
-/** 사용자가 확정한 레퍼런스 카테고리 이름들을 보내 이미지 검색을 이어서 실행한다. */
-export async function sendCategories({ threadId, categories, onStatus }) {
+/** 사용자가 확정한 레퍼런스 카테고리 이름들과 카테고리당 이미지 수(1~10)를 보내 이미지 검색을 이어서 실행한다. */
+export async function sendCategories({ threadId, categories, perCategory, onStatus }) {
   onStatus('카테고리 전송 중')
   const request = fetch(`${API_URL}/answer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ thread_id: threadId, categories }),
+    body: JSON.stringify({ thread_id: threadId, categories, per_category: perCategory }),
   })
   onStatus('서버 응답 대기 중')
   return parse(await request)

@@ -26,6 +26,12 @@ def test_answer_without_waiting_thread_returns_409(client):
     assert r.status_code == 409
 
 
+@pytest.mark.parametrize("count", [0, 11])
+def test_answer_rejects_out_of_range_count(client, count):
+    r = client.post("/answer", json={"thread_id": "t", "categories": ["a"], "per_category": count})
+    assert r.status_code == 422
+
+
 def test_answer_rejects_empty_categories(client):
     r = client.post("/answer", json={"thread_id": "t", "categories": []})
     assert r.status_code == 422
@@ -45,7 +51,8 @@ def test_upload_full_flow_includes_company_rules(client, png_bytes):
         if body["status"] != "needs_input":
             break
         if body["kind"] == "confirm_categories":
-            payload = {"thread_id": body["thread_id"], "categories": [c["name"] for c in body["proposed_categories"]]}
+            payload = {"thread_id": body["thread_id"], "categories": [c["name"] for c in body["proposed_categories"]],
+                       "per_category": 2}  # 비용을 줄이려고 적게 요청
         else:
             answers = {q["key"]: "prop" if q["key"] == "asset_type" else "테스트 답변" for q in body["questions"]}
             payload = {"thread_id": body["thread_id"], "answers": answers}
@@ -58,3 +65,6 @@ def test_upload_full_flow_includes_company_rules(client, png_bytes):
     assert body["categories"] and body["candidates"]
     names = {c["name"] for c in body["categories"]}
     assert {c["topic"] for c in body["candidates"]} <= names  # 모든 후보가 확정된 카테고리에 속한다
+    for name in names:  # 고른 개수(2)를 넘지 않고, 검토 결과(점수·이유)가 붙어 있다
+        assert sum(c["topic"] == name for c in body["candidates"]) <= 2
+    assert all(c["review"] for c in body["candidates"])

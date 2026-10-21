@@ -39,7 +39,7 @@ async def upload(form: Annotated[UploadForm, Depends(get_upload_form)], image: U
 async def answer(body: AnswerRequest):
     """질문 답변 또는 확정한 카테고리를 받아 멈춘 작업을 이어서 실행한다."""
     try:
-        return await runner.resume(body.thread_id, body.answers, body.categories)
+        return await runner.resume(body.thread_id, body.answers, body.categories, body.per_category)
     except runner.ThreadNotWaiting:
         raise HTTPException(status_code=409, detail="답변을 기다리는 작업이 없습니다. 처음부터 다시 시도해주세요.")
     except runner.WrongAnswerKind as e:

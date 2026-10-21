@@ -36,3 +36,16 @@ def test_answer_request_cleans_categories():
 def test_answer_request_rejects_bad_categories(names):
     with pytest.raises(ValidationError):
         AnswerRequest(thread_id="t", categories=names)
+
+
+@pytest.mark.parametrize("count, ok", [(1, True), (10, True), (5, True), (0, False), (11, False)])
+def test_answer_request_per_category_range(count, ok):
+    if ok:
+        assert AnswerRequest(thread_id="t", categories=["a"], per_category=count).per_category == count
+    else:
+        with pytest.raises(ValidationError):
+            AnswerRequest(thread_id="t", categories=["a"], per_category=count)
+
+
+def test_answer_request_per_category_defaults_to_five():
+    assert AnswerRequest(thread_id="t", categories=["a"]).per_category == 5

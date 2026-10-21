@@ -2,15 +2,18 @@ import asyncio
 
 import pytest
 
-from app.agent import intake, nodes, references, runner
+from app.agent import intake, nodes, references, review, runner
 from app.agent.checklist import CHECKLISTS, UNDECIDED
 from app.agent.state import (
     AssetClassification,
     ExtractedDetails,
     ExtractedField,
+    GroundedCategories,
     Guideline,
     GuidelineRouting,
     Candidate,
+    ImageReview,
+    ImageVerdict,
     InputAnalysis,
     ReferenceCategory,
     ReferencePlan,
@@ -69,15 +72,30 @@ def fake_llm(monkeypatch):
             InputAnalysis: InputAnalysis(subject="테스트 대상"),
             GuidelineRouting: GuidelineRouting(categories=["monster"]),
             ReferencePlan: ReferencePlan(categories=[CATEGORY], exclude_terms=["cartoon"]),
+            ImageReview: ImageReview(verdicts=[ImageVerdict(index=1, score=9, reason="눈 덮인 들판이 분명함")]),
+            GroundedCategories: GroundedCategories(
+                categories=[CATEGORY.model_copy(update={"applied_rules": ["중세 후기 기준"]})], exclude_terms=["modern"]
+            ),
         })
         monkeypatch.setattr(intake, "get_client", lambda: client)
         monkeypatch.setattr(nodes, "get_client", lambda: client)
         monkeypatch.setattr(references, "get_client", lambda: client)
+        monkeypatch.setattr(review, "get_client", lambda: client)
+
+        async def fake_download(http, gate, candidate):
+            return "data:image/png;base64,AAAA"  # 검토용 이미지 내려받기 대역
+
+        monkeypatch.setattr(review, "_to_data_url", fake_download)
 
         async def fake_search(query, categories):
             return [Guideline(text="t", source_type="company_rules", category="color", file="f.md", section="s")]
 
         monkeypatch.setattr(nodes, "search_guidelines", fake_search)
+
+        async def fake_scoped(query, source_type, categories, n_results=3):
+            return []
+
+        monkeypatch.setattr(references, "search_scoped", fake_scoped)
 
         class FakeSource:
             name = "Fake"
@@ -103,6 +121,7 @@ def test_complete_input_goes_straight_to_category_proposal(fake_llm):
     assert result.status == "needs_input" and result.kind == "confirm_categories"
     assert result.asset_type == "prop"
     assert [c.name for c in result.proposed_categories] == ["배경"]
+    assert result.goal == ""  # 분석 결과의 goal 이 확인 화면까지 전달된다
 
 
 def test_missing_items_are_asked_then_unanswered_become_undecided(fake_llm):
@@ -118,6 +137,21 @@ def test_missing_items_are_asked_then_unanswered_become_undecided(fake_llm):
     assert first.kind == "questions" and [q.key for q in first.questions] == ["function", "interaction"]
     assert second.kind == "confirm_categories"  # 질문 답변 후 다음 단계(카테고리 제안)로 진행
     assert second.details == {"scale": "허리 높이", "function": "조명", "interaction": UNDECIDED}
+
+
+def test_empty_answers_do_not_repeat_the_same_questions(fake_llm):
+    # 회귀 테스트: LangGraph 는 빈 dict 로 재개하면 같은 질문을 다시 하므로, 빈 답도 '미정'으로 처리되어 다음 단계로 가야 한다
+    fake_llm("prop", extracted())
+
+    async def flow():
+        first = await runner.start(start_state())
+        return first, await runner.resume(first.thread_id, {}, None)
+
+    first, second = asyncio.run(flow())
+
+    assert first.kind == "questions" and len(first.questions) == 3
+    assert second.kind == "confirm_categories"  # 같은 질문이 다시 오지 않는다
+    assert set(second.details.values()) == {UNDECIDED}
 
 
 def test_unknown_type_asks_type_first(fake_llm):
@@ -141,7 +175,7 @@ def test_full_flow_confirm_categories_then_search(fake_llm):
 
     async def flow():
         first = await runner.start(start_state())
-        return await runner.resume(first.thread_id, {}, ["배경"])
+        return await runner.resume(first.thread_id, {}, ["배경"], 3)
 
     done = asyncio.run(flow())
 
@@ -149,7 +183,10 @@ def test_full_flow_confirm_categories_then_search(fake_llm):
     assert done.analysis.subject == "테스트 대상"
     assert [c.name for c in done.categories] == ["배경"]
     assert [(c.topic, c.image_url) for c in done.candidates] == [("배경", "https://img/snowy field")]
-    assert done.exclude_terms == ["cartoon"]
+    assert done.candidates[0].score == 0.9 and done.candidates[0].review == "눈 덮인 들판이 분명함"  # 검토 점수와 이유
+    assert done.rejected_candidates == []
+    assert done.exclude_terms == ["cartoon", "modern"]  # 세계관 가이드가 금지한 단어가 합쳐진다
+    assert done.categories[0].applied_rules == ["중세 후기 기준"]
 
 
 def test_wrong_answer_kind_is_rejected(fake_llm):

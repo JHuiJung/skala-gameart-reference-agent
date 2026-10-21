@@ -64,8 +64,8 @@ def ask_type(state: AgentState) -> dict:
         options=[Option(value=k, label=v) for k, v in TYPE_LABELS.items()],
     )
     while True:  # 선택지 밖의 답이 오면 다시 묻는다 (사용자가 답해야만 다음으로 진행)
-        answers = interrupt({"kind": "questions", "questions": [question.model_dump()]})
-        chosen = (answers.get("asset_type") or "").strip()
+        resume = interrupt({"kind": "questions", "questions": [question.model_dump()]})
+        chosen = (resume["answers"].get("asset_type") or "").strip()
         if chosen in TYPE_LABELS:
             return {"asset_type": chosen, "current_step": "에셋 종류 확인"}
 
@@ -104,7 +104,7 @@ def ask_details(state: AgentState) -> dict:
     questions = [
         Question(key=i.key, label=i.label, question=i.question, hint=i.hint) for i in missing
     ]
-    answers = interrupt({"kind": "questions", "questions": [q.model_dump() for q in questions]})
+    answers = interrupt({"kind": "questions", "questions": [q.model_dump() for q in questions]})["answers"]
 
     details = dict(state["details"])
     for i in missing:

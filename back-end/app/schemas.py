@@ -24,6 +24,8 @@ class AnswerRequest(BaseModel):
     answers: dict[str, str] = {}
     # kind=confirm_categories 에 대한 답: 사용자가 확정한 카테고리 이름 (제안에서 뺀 것은 제외, 새로 추가한 것은 포함)
     categories: list[str] | None = None
+    # kind=confirm_categories 와 함께 보내는, 카테고리당 보여줄 이미지 수 (1~10)
+    per_category: int = Field(default=5, ge=1, le=10)
 
     @field_validator("categories")
     @classmethod
@@ -54,11 +56,13 @@ class AgentResponse(BaseModel):
 
     questions: list[Question] = []  # (kind=questions) 사용자에게 되묻는 질문
     proposed_categories: list[ReferenceCategory] = []  # (kind=confirm_categories) AI 가 제안한 레퍼런스 카테고리
+    goal: str = ""  # (kind=confirm_categories) AI 가 이해한 사용자의 최종 목표 - 잘못 이해했는지 확인용
 
     # (done) 처리 결과
     analysis: InputAnalysis | None = None  # 입력 분석 결과
     guidelines: list[Guideline] = []  # RAG 로 찾은 관련 내부 가이드
     categories: list[ReferenceCategory] = []  # 사용자가 확정한 레퍼런스 카테고리 (candidates 의 topic 과 같은 이름)
     exclude_terms: list[str] = []  # 검색에서 제외한 단어
-    candidates: list[Candidate] = []  # 카테고리별로 찾은 레퍼런스 이미지 후보
+    candidates: list[Candidate] = []  # 카테고리별로 찾아 검토를 통과한 레퍼런스 이미지 (topic 이 카테고리 이름)
+    rejected_candidates: list[Candidate] = []  # 검토에서 부적합으로 걸러진 이미지 (review 에 이유)
     source_errors: list[str] = []  # 응답하지 않은 검색 출처
