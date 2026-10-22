@@ -174,7 +174,7 @@ docker compose up --build   # 프론트 5173, 백엔드 8000
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/screenshots/01_input.png" alt="① 첫 화면" width="100%"><br>
+      <img src="docs/screenshots/01_Input.png" alt="① 첫 화면" width="100%"><br>
       <sub>① 첫 화면 — 텍스트 입력과 이미지 첨부</sub>
     </td>
     <td align="center" width="50%">
