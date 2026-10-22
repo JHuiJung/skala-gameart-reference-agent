@@ -174,11 +174,20 @@ class ImageUsage(BaseModel):
     usage: str = Field(description="활용 목적 한 문장 (한국어)")
 
 
+class RuleApplication(BaseModel):
+    """지시서 본문에 회사 규정이 어떻게 반영됐는지 한 건."""
+
+    rule_id: str = Field(description="입력에 적힌 규정 번호 (예: 규정_1)")
+    heading: str = Field(description="이 규정이 반영된 섹션의 제목 그대로")
+    statement: str = Field(description="'~규정으로 인해 ~해야 한다' 형식의 한 문장 (한국어)")
+
+
 class BriefDraft(BaseModel):
-    """[6단계 결과] LLM 이 쓴 지시서 본문과 이미지별 활용 목적."""
+    """[6단계 결과] LLM 이 쓴 지시서 본문, 이미지별 활용 목적, 회사 규정 반영 내역."""
 
     sections: list[BriefSectionBody]
     image_usage: list[ImageUsage]
+    rule_applications: list[RuleApplication] = Field(default_factory=list)
 
 
 class SavedReference(BaseModel):

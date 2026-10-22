@@ -3,9 +3,9 @@
 흐름: select_images(사용자 선택) → draft_brief_plan → confirm_brief(사용자 승인·수정) → save_references → write_brief
 """
 import asyncio
+import re
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
 
 from langgraph.types import interrupt
 
@@ -20,6 +20,7 @@ from app.agent.state import (
     BriefSection,
     Candidate,
     Guideline,
+    RuleApplication,
     SavedReference,
 )
 from app.agent.storage import category_folders, create_output_dir, save_selected, write_references_json
@@ -27,7 +28,8 @@ from app.agent.storage import category_folders, create_output_dir, save_selected
 # 이 두 섹션은 이미지 저장 결과로 코드가 직접 작성한다. (LLM 이 파일 경로나 라이선스를 지어내지 못하게)
 SECTION_IMAGES = "참고 이미지별 설명과 활용 목적"
 SECTION_LICENSE = "이미지 출처 및 라이선스 확인 정보"
-AUTO_SECTIONS = [SECTION_IMAGES, SECTION_LICENSE]
+SECTION_RULES = "회사 규정 반영 내역"
+AUTO_SECTIONS = [SECTION_RULES, SECTION_IMAGES, SECTION_LICENSE]
 
 # Need.md 9장의 지시서 필수 항목. 계획에 빠져 있으면 채워 넣는다.
 REQUIRED_HEADINGS = [
@@ -49,7 +51,7 @@ PLAN_PROMPT = f"""너는 게임 아트팀에 전달할 작업 지시서(지시�
 
 - 아래 섹션을 이 제목 그대로, 이 순서로 포함해라: {' / '.join(REQUIRED_HEADINGS)}
 - 에셋 종류에 필요한 섹션이 더 있으면 추가해도 된다. (예: 캐릭터라면 '표정·포즈')
-- '{SECTION_IMAGES}', '{SECTION_LICENSE}' 는 시스템이 자동으로 작성하니 만들지 마라.
+- '{SECTION_RULES}', '{SECTION_IMAGES}', '{SECTION_LICENSE}' 는 시스템이 자동으로 작성하니 만들지 마라.
 - outline 은 그 섹션에 쓸 내용을 2~4줄로 요약해라. 입력(사용자 요청, 확인된 필수 항목, 세계관 가이드, 회사 규정, 선택한 레퍼런스)에
   근거한 내용만 적고, 회사 규정은 수치를 인용해라. 정보가 없는 항목은 '미정이라 AI 제안으로 채움'이라고 적어라.
 - 사용자가 한국어를 쓰니 제목과 outline 모두 한국어로 써라."""
@@ -67,8 +69,20 @@ WRITE_PROMPT = f"""너는 게임 아트팀에 전달할 작업 지시서를 쓰�
   세계관 가이드가 금지한 요소는 '피해야 할 요소'에 반영해라.
 - 값이 '미정'인 항목은 세계관과 규정에 맞게 제안하되 문장 끝에 '(AI 제안)'을 붙여라.
 - 목록과 표를 적절히 써서 아트팀이 바로 볼 수 있게 간결하게 써라. 본문에 섹션 제목(##)은 쓰지 마라. 시스템이 붙인다.
-- 파일 경로나 링크, 라이선스 정보는 쓰지 마라. '{SECTION_IMAGES}', '{SECTION_LICENSE}' 섹션은 시스템이 작성한다.
-- image_usage: 선택된 이미지마다 id 를 그대로 쓰고, 이 작업에서 무엇을 참고하려고 고른 이미지인지(카테고리, 검토 의견 기반) 한 문장으로 써라."""
+- 파일 경로나 링크, 라이선스 정보는 쓰지 마라. '{SECTION_RULES}', '{SECTION_IMAGES}', '{SECTION_LICENSE}' 섹션은 시스템이 작성한다.
+- image_usage: 선택된 이미지마다 id 를 그대로 쓰고, 이 작업에서 무엇을 참고하려고 고른 이미지인지(카테고리, 검토 의견 기반) 한 문장으로 써라.
+
+레퍼런스 표시:
+- 선택한 레퍼런스에는 '레퍼런스_01' 같은 번호가 붙어 있다. 본문에서 특정 요소를 지시할 때, 그 요소를 참고할 이미지가 있으면
+  문장 끝에 번호를 괄호로 달아라. (예: '겨울 느낌이 나는 털 재킷 (레퍼런스_01 참고)') 번호는 입력에 있는 것만 쓰고, 근거 이미지가 없는 지시에는 달지 마라.
+- 이미지가 실제로 보여 주는 것(검토 의견)과 맞는 요소에만 달아라. 억지로 모든 문장에 달지 마라.
+
+회사 규정 표시:
+- 회사 규정에는 '규정_1' 같은 번호가 붙어 있다. 본문에 규정 때문에 정해진 내용이 있으면 '~규정으로 인해 ~해야 한다' 형태로 그 사실이
+  드러나게 써라. (예: '색상 규정에 따라 팔레트는 최대 5색으로 제한한다') 규정 이름은 입력의 '출처 > 섹션'에서 따오고,
+  본문에는 '규정_1' 같은 번호를 쓰지 마라. 번호는 rule_applications 에만 쓴다.
+- rule_applications: 본문에 반영한 규정마다 rule_id(입력의 번호 그대로), heading(반영한 섹션 제목), statement('~규정으로 인해 ~해야 한다' 한 문장)를 적어라.
+  실제로 본문에 반영하지 않은 규정은 적지 마라. 규정에 없는 내용을 규정 때문이라고 쓰지 마라."""
 
 
 # ── 1. 이미지 선택 ───────────────────────────────────────────────────────────
@@ -98,10 +112,21 @@ def _format_guides(guides: list[Guideline]) -> str:
     return "\n\n".join(f"[{g.file} > {g.section}]\n{g.text}" for g in guides) or "(없음)"
 
 
+def image_labels(state: AgentState) -> dict[str, str]:
+    """선택한 이미지 id → '레퍼런스_01' 형태의 번호. 본문 표시와 이미지 섹션이 같은 번호를 쓴다."""
+    return {c.id: f"레퍼런스_{i:02d}" for i, c in enumerate(_selected(state), start=1)}
+
+
+def rule_labels(rules: list[Guideline]) -> dict[str, Guideline]:
+    """'규정_1' 형태의 번호 → 규정 조각."""
+    return {f"규정_{i}": g for i, g in enumerate(rules, start=1)}
+
+
 def brief_context(state: AgentState, rules: list[Guideline]) -> str:
     """계획과 본문 작성에 쓸 입력 정보를 하나의 텍스트로 모은다."""
     a = state["analysis"]
     asset_type = state.get("asset_type")
+    rules_text = "\n\n".join(f"[{k}] {g.file} > {g.section}\n{g.text}" for k, g in rule_labels(rules).items()) or "(없음)"
     details = "\n".join(
         f"- {item.label}: {state['details'].get(item.key, '미정')}" for item in CHECKLISTS.get(asset_type, [])
     )
@@ -109,8 +134,9 @@ def brief_context(state: AgentState, rules: list[Guideline]) -> str:
     category_rules = "\n".join(
         f"- {c.name}: {'; '.join(c.applied_rules)}" for c in state["final_categories"] if c.applied_rules
     )
+    labels = image_labels(state)
     images = "\n".join(
-        f"- [{c.id}] 카테고리 '{c.topic}' | {c.title} | 검토 의견: {c.review or '없음'} | 라이선스: {c.license_detail or c.license}"
+        f"- {labels[c.id]} (id: {c.id}) 카테고리 '{c.topic}' | {c.title} | 검토 의견: {c.review or '없음'} | 라이선스: {c.license_detail or c.license}"
         for c in _selected(state)
     )
     return (
@@ -120,7 +146,7 @@ def brief_context(state: AgentState, rules: list[Guideline]) -> str:
         f"## 분석된 요구사항\n{a.model_dump_json(indent=2)}\n\n"
         f"## 세계관·기획 가이드\n{_format_guides(world)}\n\n"
         f"## 카테고리별로 반영한 세계관 규칙\n{category_rules or '(없음)'}\n\n"
-        f"## 회사 규정\n{_format_guides(rules)}\n\n"
+        f"## 회사 규정\n{rules_text}\n\n"
         f"## 제외 조건\n{', '.join(state['reference_plan'].exclude_terms) or '(없음)'}\n\n"
         f"## 선택한 레퍼런스 이미지\n{images}"
     )
@@ -190,21 +216,60 @@ def _md_cell(text: str) -> str:
 STATUS_LABEL = {"saved": "저장됨", "link_only": "링크만 기록", "failed": "저장 실패"}
 
 
-def _images_section(saved: list[SavedReference], folders: dict[str, str]) -> str:
+def humanize_rule_labels(body: str, rules: dict[str, Guideline]) -> str:
+    """본문에 새어 나온 '규정_1' 같은 내부 번호를 규정 섹션 이름으로 바꾼다. (없는 번호는 그대로 둔다)"""
+    return re.sub(r"규정_(\d+)(?!\d)", lambda m: f"「{rules[m.group(0)].section}」" if m.group(0) in rules else m.group(0), body)
+
+
+def _used_in(label: str, bodies: dict[str, str]) -> list[str]:
+    """본문에서 이 번호를 인용한 섹션 제목들. (번호가 '레퍼런스_1' 과 '레퍼런스_10' 으로 섞이지 않게 숫자 경계를 확인한다)"""
+    pattern = re.compile(re.escape(label) + r"(?!\d)")
+    return [heading for heading, body in bodies.items() if pattern.search(body)]
+
+
+def _images_section(
+    saved: list[SavedReference], folders: dict[str, str], labels: dict[str, str] | None = None, bodies: dict[str, str] | None = None
+) -> str:
+    labels, bodies = labels or {}, bodies or {}
     out = []
     for category, folder in folders.items():
         out.append(f"### {folder}")
         for ref in (r for r in saved if r.candidate.topic == category):
             c = ref.candidate
             title = c.title or "(제목 없음)"
-            target = f"![{title}]({quote(ref.file)})" if ref.file else f"[{title}]({c.source_url})"
+            target = f"![{title}](<{ref.file}>)" if ref.file else f"[{title}]({c.source_url})"
             note = f" ({ref.note})" if ref.note else ""
-            out.append(f"- {target}{note}")
+            label = labels.get(c.id)
+            out.append(f"- {f'**{label}** ' if label else ''}{target}{note}")
             out.append(f"  - 활용 목적: {ref.usage or '(작성되지 않음)'}")
+            if label:
+                used = _used_in(label, bodies)
+                out.append(f"  - 지시서에서 참고된 곳: {', '.join(used) if used else '본문에서 직접 인용되지 않음'}")
             if c.review:
                 out.append(f"  - 검토 의견: {c.review}")
         out.append("")
     return "\n".join(out).rstrip()
+
+
+def clean_rule_applications(items: list[RuleApplication], rules: dict[str, Guideline], headings: list[str]) -> list[RuleApplication]:
+    """존재하지 않는 규정 번호나 섹션을 가리키는 항목은 버리고, 같은 규정·섹션의 중복도 하나로 합친다."""
+    seen: set[tuple[str, str]] = set()
+    out = []
+    for item in items:
+        key = (item.rule_id, item.heading)
+        if item.rule_id not in rules or item.heading not in headings or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+def _rules_section(items: list[RuleApplication], rules: dict[str, Guideline]) -> str:
+    rows = ["| 규정 (출처) | 반영한 섹션 | 반영 내용 |", "|---|---|---|"]
+    for item in items:
+        g = rules[item.rule_id]
+        rows.append(f"| {_md_cell(f'{g.file} > {g.section}')} | {_md_cell(item.heading)} | {_md_cell(item.statement)} |")
+    return "\n".join(rows)
 
 
 def _license_section(saved: list[SavedReference]) -> str:
@@ -225,7 +290,12 @@ def _license_section(saved: list[SavedReference]) -> str:
     return warning + "\n".join(rows)
 
 
-def build_markdown(state: AgentState, bodies: dict[str, str], saved: list[SavedReference]) -> str:
+def build_markdown(
+    state: AgentState,
+    bodies: dict[str, str],
+    saved: list[SavedReference],
+    rule_applications: list[RuleApplication] | None = None,
+) -> str:
     """승인된 계획 순서대로 LLM 본문을 붙이고, 이미지·라이선스 섹션은 저장 결과로 직접 작성한다."""
     a = state["analysis"]
     folders = category_folders(state)
@@ -238,11 +308,16 @@ def build_markdown(state: AgentState, bodies: dict[str, str], saved: list[SavedR
         f"- 결과 폴더: {Path(state['output_dir']).name}",
         "",
     ]
+    rules = rule_labels(state.get("rule_guides", []))
+    bodies = {h: humanize_rule_labels(b, rules) for h, b in bodies.items()}
     parts = ["\n".join(header)]
     for section in state["brief_plan"].sections:
         body = bodies.get(section.heading, "(이 섹션은 작성되지 않았습니다. 다시 시도해주세요.)")
         parts.append(f"## {section.heading}\n\n{body.strip()}")
-    parts.append(f"## {SECTION_IMAGES}\n\n{_images_section(saved, folders)}")
+    applied = clean_rule_applications(rule_applications or [], rules, [s.heading for s in state["brief_plan"].sections])
+    if applied:
+        parts.append(f"## {SECTION_RULES}\n\n{_rules_section(applied, rules)}")
+    parts.append(f"## {SECTION_IMAGES}\n\n{_images_section(saved, folders, image_labels(state), bodies)}")
     parts.append(f"## {SECTION_LICENSE}\n\n{_license_section(saved)}")
     return "\n\n".join(parts) + "\n"
 
@@ -263,9 +338,13 @@ async def write_brief(state: AgentState) -> dict:
     )
     draft = completion.choices[0].message.parsed
 
-    usage = {u.id: u.usage for u in draft.image_usage}
-    saved = [r.model_copy(update={"usage": usage.get(r.candidate.id, "")}) for r in state["saved_refs"]]
-    markdown = build_markdown(state, {s.heading: s.body for s in draft.sections}, saved)
+    by_label = {label: id for id, label in image_labels(state).items()}
+    usage = {by_label.get(u.id, u.id): u.usage for u in draft.image_usage}  # id 대신 '레퍼런스_01' 로 적어도 받아 준다
+    saved = [
+        r.model_copy(update={"usage": usage.get(r.candidate.id) or f"'{r.candidate.topic}' 카테고리 참고용으로 선택"})
+        for r in state["saved_refs"]
+    ]
+    markdown = build_markdown(state, {s.heading: s.body for s in draft.sections}, saved, draft.rule_applications)
 
     path = Path(state["output_dir"]) / "지시서.md"
     path.write_text(markdown, encoding="utf-8")

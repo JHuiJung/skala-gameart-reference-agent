@@ -12,10 +12,12 @@ from app.agent.state import (
     BriefSection,
     BriefSectionBody,
     Candidate,
+    Guideline,
     ImageUsage,
     InputAnalysis,
     ReferenceCategory,
     ReferencePlan,
+    RuleApplication,
     SavedReference,
 )
 from app.schemas import AnswerRequest
@@ -83,7 +85,7 @@ def test_plan_step_uses_company_rules_and_selected_images(fake_llm, monkeypatch)
     plan_call = next(c for c in client.calls if c["messages"][0]["content"] == brief.PLAN_PROMPT)
     prompt = plan_call["messages"][1]["content"]
     assert "color 규정: 최대 5색" in prompt  # 회사 규정이 계획 입력에 들어간다
-    assert "[snowy field]" in prompt and "눈 덮인 들판이 분명함" in prompt  # 선택한 이미지와 검토 의견
+    assert "레퍼런스_01 (id: snowy field)" in prompt and "눈 덮인 들판이 분명함" in prompt  # 선택한 이미지와 검토 의견
     assert confirm.kind == "confirm_brief" and confirm.auto_sections == brief.AUTO_SECTIONS
     assert {s.heading for s in confirm.brief_sections} >= set(brief.REQUIRED_HEADINGS)
 
@@ -115,7 +117,7 @@ def test_approved_plan_creates_numbered_folder_with_images_references_and_brief(
     assert text.startswith("# 작업 지시서: 테스트 대상")
     assert "## 작업 목적 및 디자인 목표\n\n눈 덮인 들판 배경을 만든다." in text  # LLM 본문
     assert "## 사용자가 추가한 섹션" in text and "(이 섹션은 작성되지 않았습니다" in text  # LLM 이 안 쓴 섹션은 표시
-    assert "![Snowy Field](01_%EB%B0%B0%EA%B2%BD/01_Snowy_Field.png)" in text  # 한글 경로는 인코딩된 상대 링크
+    assert "![Snowy Field](<01_배경/01_Snowy_Field.png>)" in text  # 한글 경로는 <> 로 감싼 상대 링크
     assert "활용 목적: 설원의 질감 참고" in text and "검토 의견: 눈 덮인 들판이 분명함" in text
     assert "| 01_배경/01_Snowy_Field.png | - | kim | CC BY 2.0 | 저장됨 |" in text
     assert "⚠️" not in text  # 라이선스가 모두 확인됨
@@ -186,7 +188,7 @@ def test_unverified_images_are_linked_not_saved_in_markdown(tmp_path, monkeypatc
     usage = {r.candidate.id: r.model_copy(update={"usage": f"{r.candidate.id} 용도"}) for r in saved}
     md = brief.build_markdown(st, {"목표": "본문"}, list(usage.values()))
 
-    assert "![Image ok](01_%EC%9D%98%EC%83%81/01_Image_ok.png)" in md  # 확인된 이미지는 파일로 삽입
+    assert "![Image ok](<01_의상/01_Image_ok.png>)" in md  # 확인된 이미지는 파일로 삽입
     assert "[Pipe | Title](https://src/unsure)" in md and "[Image stock](https://src/stock)" in md  # 나머지는 원본 링크
     assert "(라이선스를 확인하지 못해 파일로 저장하지 않고 링크만 기록했어요.)" in md
     assert "⚠️ 라이선스가 확인되지 않았거나 제한된 이미지가 2장" in md
@@ -202,6 +204,61 @@ def test_markdown_follows_the_approved_plan_order(tmp_path):
     md = brief.build_markdown(st, {"첫째": "A", "둘째": "B"}, saved)
 
     assert md.index("## 둘째") < md.index("## 첫째") < md.index(f"## {brief.SECTION_IMAGES}") < md.index(f"## {brief.SECTION_LICENSE}")
+
+
+def rule(file, section):
+    return Guideline(text="최대 5색", source_type="company_rules", category="color", file=file, section=section)
+
+
+def test_context_numbers_images_and_rules_for_citation(tmp_path):
+    st = brief_state([candidate("a"), candidate("b")], ["a", "b"], tmp_path)
+    ctx = brief.brief_context(st, [rule("color.md", "팔레트")])
+
+    assert "레퍼런스_01 (id: a)" in ctx and "레퍼런스_02 (id: b)" in ctx
+    assert "[규정_1] color.md > 팔레트" in ctx
+
+
+def test_images_section_shows_where_each_reference_is_cited(tmp_path):
+    st = brief_state([candidate("a"), candidate("b")], ["a", "b"], tmp_path)
+    saved = [SavedReference(candidate=candidate(i), file=f"01_의상/{i}.png", status="saved", usage="u") for i in "ab"]
+    bodies = {"시각적 특징": "털 재킷 (레퍼런스_01 참고)", "색상": "레퍼런스_01, 레퍼런스_10 참고"}
+
+    md = brief.build_markdown(st, bodies, saved)
+
+    assert "**레퍼런스_01**" in md and "지시서에서 참고된 곳: 시각적 특징, 색상" in md
+    assert "지시서에서 참고된 곳: 본문에서 직접 인용되지 않음" in md  # 레퍼런스_02, 레퍼런스_10 은 02 와 섞이지 않는다
+
+
+def test_rules_section_lists_applied_rules_and_drops_invalid_ones(tmp_path):
+    st = brief_state([candidate("a")], ["a"], tmp_path)
+    st["rule_guides"] = [rule("color.md", "팔레트")]
+    st["brief_plan"] = BriefPlan(sections=[BriefSection(heading="색상", outline="")])
+    apps = [
+        RuleApplication(rule_id="규정_1", heading="색상", statement="색상 규정으로 인해 팔레트는 최대 5색으로 제한한다"),
+        RuleApplication(rule_id="규정_9", heading="색상", statement="없는 규정"),
+        RuleApplication(rule_id="규정_1", heading="없는 섹션", statement="없는 섹션"),
+        RuleApplication(rule_id="규정_1", heading="색상", statement="중복"),
+    ]
+
+    md = brief.build_markdown(st, {"색상": "본문"}, [], apps)
+
+    assert f"## {brief.SECTION_RULES}" in md
+    assert "| color.md > 팔레트 | 색상 | 색상 규정으로 인해 팔레트는 최대 5색으로 제한한다 |" in md
+    assert "없는 규정" not in md and "없는 섹션" not in md and "중복" not in md
+
+
+def test_internal_rule_numbers_in_body_become_section_names(tmp_path):
+    st = brief_state([candidate("a")], ["a"], tmp_path)
+    st["rule_guides"] = [rule("color.md", "1. 팔레트 제한")]
+
+    md = brief.build_markdown(st, {"목표": "최대 5색 (규정_1 로 인해, 규정_7 은 없음)"}, [])
+
+    assert "「1. 팔레트 제한」 로 인해" in md and "규정_7 은 없음" in md
+
+
+def test_rules_section_is_omitted_when_nothing_applied(tmp_path):
+    st = brief_state([candidate("a")], ["a"], tmp_path)
+    assert f"## {brief.SECTION_RULES}" not in brief.build_markdown(st, {"목표": "본문"}, [])
 
 
 # ── 요청 검증 ────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import os
 from functools import cache
 
 from openai import AsyncOpenAI
+from langsmith.wrappers import wrap_openai
 
 INTAKE_MODEL = "gpt-4o-mini"  # 에셋 종류 분류, 필수 항목 추출용 (이미지 입력 지원)
 ANALYSIS_MODEL = "gpt-4o-mini"  # 입력 분석용 (이미지 입력을 지원하는 모델)
@@ -15,4 +16,4 @@ PLANNER_MODEL = "gpt-4o-mini"  # 레퍼런스 카테고리 제안·보완용
 @cache
 def get_client() -> AsyncOpenAI:
     """처음 호출될 때 한 번만 만들고 재사용한다. (import 시점이 아니라 사용 시점에 API 키를 읽는다)"""
-    return AsyncOpenAI()
+    return wrap_openai(AsyncOpenAI())
